@@ -1,5 +1,39 @@
 # Progress
 
+## Issue #396 truthful streaming import progress implementation
+
+The frontend-only implementation is complete. The search home no longer
+contains the process/runtime/capability matrix, the search controls move up to
+the top bar, and the redundant brand chevron, breadcrumb prefix and decorative
+sidebar search control are removed. A new `系统状态` sidebar entry opens the
+existing bounded capability matrix in the right sheet; the lifecycle pill,
+compact index status, local-only notice, query behavior and four-card result
+density are unchanged.
+
+Managed-root cards now keep exact observed counts while a separate visual fill
+eases toward each newly observed percentage over four seconds without
+extrapolation. A new scan resets that visual fill; terminal state settles
+quickly. The displayed stage is only the exact latest daemon phase and is
+revealed progressively from an already complete string. Replacing the message
+cancels the old CSS animation, reduced-motion disables it, and assistive
+technology receives one complete polite announcement rather than individual
+characters.
+
+The strict keyword gate is fail closed. Nonzero searchable documents are only
+partial availability. Full readiness additionally requires terminal complete
+phase, complete completeness, processed count at least total count, nonzero
+searchable count, zero root OCR backlog and global keyword capability exactly
+available. Focused tests cover every observed active phase, OCR-after-scan,
+degraded capability, incomplete counts, partial/failed terminal scans and the
+empty-root boundary.
+
+All 46 desktop Vitest checks and the TypeScript/Vite/PDF.js production build
+passed. Local public-preview inspection confirmed the revised search home,
+source sheet and system-status sheet, the partial OCR wording after animation,
+active navigation, complete screen-reader text and zero browser warnings or
+errors. Contract, loop-state, PR-budget, diff and public-repository gates pass;
+no private root or full import was used.
+
 ## Issue #396 truthful streaming import progress and system status contract
 
 Issue #396 is the sole active GUI slice. It moves the existing process/runtime/

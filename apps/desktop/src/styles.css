@@ -30,6 +30,7 @@ button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .5; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #5b67d4; outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: #d8d8d6; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: #c2c2bf; background-clip: content-box; }
@@ -40,10 +41,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .brand > span { display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 8px; color: #fff; background: #1c1d21; font-size: 12px; font-weight: 700; letter-spacing: -.02em; }
 .brand > div { display: flex; min-width: 0; align-items: center; gap: 3px; font-size: 14px; }
 .brand strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.brand svg { color: var(--muted-foreground); transform: rotate(90deg); }
-.sidebar-search { display: flex; min-height: 34px; align-items: center; gap: 8px; margin: 0 12px 10px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; color: var(--muted-foreground); background: var(--card); font-size: 13px; text-align: left; }
-.sidebar-search span { flex: 1; }
-.sidebar-search kbd { border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: #868991; background: var(--muted); font-family: inherit; font-size: 10px; }
 .sidebar nav { flex: 1; overflow-y: auto; padding: 1px 8px; }
 .sidebar nav > button { display: flex; width: 100%; min-height: 32px; align-items: center; gap: 10px; border: 0; border-radius: 6px; padding: 0 9px; color: var(--muted-foreground); background: transparent; font-size: 14px; text-align: left; transition: color .15s, background .15s; }
 .sidebar nav > button:hover { color: var(--foreground); background: rgb(236 236 235 / 60%); }
@@ -218,12 +215,17 @@ progress.progress-track::-moz-progress-bar { border-radius: inherit; background:
 .source-state-paused, .source-state-offline { background: color-mix(in srgb, var(--warn) 14%, white); color: var(--warn); }
 .source-state-deleting { background: color-mix(in srgb, var(--err) 12%, white); color: var(--err); }
 .source-progress { margin: 13px 0 10px; }
-.source-progress > div { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; color: var(--muted-foreground); font-size: 11px; }
-.source-progress strong { color: var(--foreground); font-size: 11px; }
-.source-progress progress { display: block; width: 100%; height: 7px; border: 0; border-radius: 999px; overflow: hidden; appearance: none; -webkit-appearance: none; background: var(--muted); }
-.source-progress progress::-webkit-progress-bar { background: var(--muted); }
-.source-progress progress::-webkit-progress-value { border-radius: 999px; background: var(--primary); transition: width .2s; }
-.source-progress progress::-moz-progress-bar { border-radius: 999px; background: var(--primary); }
+.source-progress-values { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; color: var(--muted-foreground); font-size: 11px; }
+.source-progress-values strong { color: var(--foreground); font-size: 11px; }
+.source-progress-track { width: 100%; height: 7px; overflow: hidden; border-radius: 999px; background: var(--muted); }
+.source-progress-fill { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width 4s cubic-bezier(.2, .7, .2, 1); }
+.source-progress-fill-terminal { transition-duration: .3s; }
+.source-progress-status { display: flex; min-height: 24px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: 11px; }
+.streaming-status-text { display: inline-block; max-width: 100%; overflow: hidden; color: var(--foreground); white-space: nowrap; clip-path: inset(0 0 0 0); animation: typewriter-reveal var(--typewriter-duration) steps(var(--typewriter-characters), end) both; }
+.keyword-readiness { flex: 0 0 auto; border-radius: 999px; padding: 3px 7px; color: var(--muted-foreground); background: var(--muted); white-space: nowrap; }
+.keyword-readiness-partial { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, white); }
+.keyword-readiness-complete { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, white); }
+@keyframes typewriter-reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 .source-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 0 0 12px; }
 .source-counts > div { min-width: 0; border-radius: 8px; padding: 6px 8px; background: var(--muted); }
 .source-counts dt { color: var(--muted-foreground); font-size: 10px; }
@@ -238,8 +240,15 @@ progress.progress-track::-moz-progress-bar { border-radius: inherit; background:
 .source-delete-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
 .sheet-actions { display: flex; gap: 8px; margin-top: 12px; }
 .source-summary { margin-top: 24px; }
+.system-status-content > .panel-card { margin-top: 0; }
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; }
+  .sheet, .spin, .streaming-status-text { animation: none !important; }
+  .source-progress-fill, progress.progress-track::-webkit-progress-value, progress.progress-track::-moz-progress-bar { transition: none !important; }
+}
 
 @media (max-width: 980px) {
   body { min-width: 360px; }

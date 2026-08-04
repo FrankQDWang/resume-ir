@@ -1,12 +1,14 @@
 import { FolderOpen, FolderTree, Pause, Play, RefreshCw, Trash2, X } from "lucide-react"
 import { useState } from "react"
 
-import type { SourceRoot } from "./daemon"
+import type { CapabilityState, SourceRoot } from "./daemon"
+import { ImportProgress } from "./import-progress"
 
 interface SourceRootsPanelProps {
   roots: SourceRoot[]
   busy: boolean
   importAllowed: boolean
+  keywordCapabilityState: CapabilityState
   onAdd(): void
   onScan(root: SourceRoot): void
   onPause(root: SourceRoot): void
@@ -20,6 +22,7 @@ export function SourceRootsPanel({
   roots,
   busy,
   importAllowed,
+  keywordCapabilityState,
   onAdd,
   onScan,
   onPause,
@@ -41,6 +44,7 @@ export function SourceRootsPanel({
         root={root}
         busy={busy}
         importAllowed={importAllowed}
+        keywordCapabilityState={keywordCapabilityState}
         onScan={() => onScan(root)}
         onPause={() => onPause(root)}
         onResume={() => onResume(root)}
@@ -72,6 +76,7 @@ function SourceRootCard({
   root,
   busy,
   importAllowed,
+  keywordCapabilityState,
   onScan,
   onPause,
   onResume,
@@ -80,6 +85,7 @@ function SourceRootCard({
   root: SourceRoot
   busy: boolean
   importAllowed: boolean
+  keywordCapabilityState: CapabilityState
   onScan(): void
   onPause(): void
   onResume(): void
@@ -88,17 +94,6 @@ function SourceRootCard({
   const scan = root.last_scan
   const deleting = root.state === "deleting"
   const active = scan !== null && ACTIVE_PHASES.has(scan.phase)
-  const total = scan?.counts.total ?? scan?.counts.discovered ?? 0
-  const processed = scan?.counts.processed ?? 0
-  const percent = scan === null
-    ? 0
-    : total > 0
-      ? Math.min(100, Math.round(processed / total * 100))
-      : active
-        ? 0
-        : scan.phase === "complete"
-          ? 100
-          : 0
   const status = deleting
     ? "正在删除本地数据"
     : root.state === "offline"
@@ -108,7 +103,7 @@ function SourceRootCard({
       : root.watcher_state === "unavailable"
         ? "监控不可用"
       : active
-        ? phaseLabel(scan.phase)
+        ? "扫描进行中"
         : scan === null
           ? "等待首次扫描"
         : scan?.phase === "failed"
@@ -117,21 +112,13 @@ function SourceRootCard({
             ? "上次扫描不完整"
             : "持续监控中"
   const scanLabel = active ? "扫描中" : scan ? "重新扫描" : "开始扫描"
-  const progressValue = active
-    ? etaLabel(scan?.eta_seconds ?? null)
-    : scan === null
-      ? "未开始"
-      : `${percent}%`
   return <article className="source-root-card">
     <div className="source-root-heading">
       <FolderTree size={22} />
       <div className="source-copy"><strong>{root.display_label}</strong><p>{status} · {scan === null ? "首次扫描后启用自动监听与 5 分钟兜底" : "自动监听与每 5 分钟兜底扫描"}</p></div>
       <span className={`source-state source-state-${deleting ? "deleting" : root.watcher_state === "unavailable" ? "offline" : root.watcher_state === "paused" ? "paused" : root.state}`}>{status}</span>
     </div>
-    <div className="source-progress">
-      <div><span>{active ? `${processed.toLocaleString()} / ${total.toLocaleString()}` : lastSyncLabel(scan?.updated_at_seconds)}</span><strong>{progressValue}</strong></div>
-      <progress max={100} value={percent} aria-label={`${root.display_label} 扫描进度 ${percent}%`} />
-    </div>
+    <ImportProgress root={root} keywordCapabilityState={keywordCapabilityState} />
     <dl className="source-counts">
       <Count label="已发现" value={root.current_counts.discovered} />
       <Count label="可搜索" value={root.current_counts.searchable} />
@@ -159,28 +146,4 @@ function SourceRootCard({
 
 function Count({ label, value }: { label: string; value: number | undefined }) {
   return <div><dt>{label}</dt><dd>{value === undefined ? "—" : value.toLocaleString()}</dd></div>
-}
-
-function phaseLabel(phase: NonNullable<SourceRoot["last_scan"]>["phase"]) {
-  return ({
-    queued: "等待扫描",
-    discovering: "发现文件",
-    fingerprinting: "核对变更",
-    classifying: "分类中",
-    parsing: "解析中",
-    ocr: "OCR 处理中",
-    publishing: "发布索引",
-  } as Record<string, string>)[phase] ?? "扫描中"
-}
-
-function etaLabel(seconds: number | null) {
-  if (seconds === null) return "估算中"
-  if (seconds < 60) return `约 ${Math.max(1, seconds)} 秒`
-  if (seconds < 3600) return `约 ${Math.ceil(seconds / 60)} 分钟`
-  return `约 ${Math.ceil(seconds / 3600)} 小时`
-}
-
-function lastSyncLabel(timestamp: number | undefined) {
-  if (timestamp === undefined) return "尚未扫描"
-  return `上次同步 ${new Date(timestamp * 1000).toLocaleString()}`
 }

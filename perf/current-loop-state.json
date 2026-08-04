@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_active",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "accepted",
   "evidence_lane": "gui_manual",
   "contract_pins": {
     "active_goal_sha256": "9035b39e26f1a2e4555fe58746680105833b4e807a4592e0a6e7c08bee494d3b",
@@ -10,7 +10,7 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "3d24e0c71904b233172f31d3bc5a42ebbfa0d2ae"
+    "git_head_sha": "3be1c5c3300bdb50be7da189ca6a9515d247c7b5"
   },
   "current_slice": "#396 truthful streaming import progress and dedicated system status",
   "hypothesis": {
@@ -18,11 +18,26 @@
     "acceptance_cell": "gui_manual",
     "expected_effect": "the GUI uses existing backend observations to ease progress without prediction, type observed status accessibly, and reserve full keyword readiness for complete scan plus zero OCR backlog plus available keyword capability",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/396",
-    "after_measurement_ref": "pending",
+    "after_measurement_ref": "PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation",
     "reprofile_ref": "not_applicable_frontend_contract_slice",
     "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"
+    },
+    {
+      "from": "slice_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/396"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3383,10 +3398,14 @@
       {"command":"focused embedding runtime, daemon runtime probe and 24 sidecar composition tests","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"},
       {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"},
       {"command":"performance, autonomous, loop, governance, exact PR-budget, format, diff and public-repository gates","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"},
-      {"command":"Hosted PR Lite","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"}
+      {"command":"Hosted PR Lite","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"},
+      {"command":"npm exec -- vitest run","exit_code":0,"evidence_ref":"PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"},
+      {"command":"npm run build","exit_code":0,"evidence_ref":"PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"},
+      {"command":"local public-preview search, source and system-status visual inspection","exit_code":0,"evidence_ref":"PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"},
+      {"command":"performance, autonomous, loop, PR-budget, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"}
     ],
-    "all_required_commands_ran": false,
-    "claim": "partial"
+    "all_required_commands_ran": true,
+    "claim": "pass"
   },
   "privacy": {
     "contains_raw_resume_text": false,
@@ -3398,10 +3417,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-396-truthful-streaming-import-ui-2026-08-04",
-  "state_version": 623,
-  "previous_state_hash": "ff9f83a4840a0b4a1b6890664dc362032bb4e917d62c525c549adec2332fa973",
-  "expected_state_version": 623,
-  "last_confirmed_side_effect": "issue_396_created_and_gui_contract_registered",
+  "state_version": 624,
+  "previous_state_hash": "a0d5f1b7ee20894f0dc1d01603409e59523b68708ef80419319ef28a2737bfef",
+  "expected_state_version": 624,
+  "last_confirmed_side_effect": "issue_396_frontend_implementation_and_local_gui_evidence_accepted",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

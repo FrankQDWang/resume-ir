@@ -1,5 +1,6 @@
 import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
+  Activity,
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
@@ -59,7 +60,7 @@ export { IndexServiceSummary, indexServicePresentation } from "./daemon-health"
 type ViewState = "idle" | "loading" | "complete" | "partial" | "empty" | "overload" | "cancelled" | "error"
 type Mode = "keyword" | "field" | "hybrid" | "semantic"
 type Degree = "" | "associate" | "bachelor" | "master" | "doctorate"
-type Overlay = "import" | "diagnostics" | null
+type Overlay = "import" | "diagnostics" | "system" | null
 
 const MODE_OPTIONS: Array<{ value: Mode; label: string }> = [
   { value: "keyword", label: "关键词" },
@@ -517,13 +518,13 @@ export function App() {
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <div className="brand"><span>IR</span><div><strong>resume-ir</strong><ChevronRight size={13} /></div></div>
-      <button className="sidebar-search" onClick={() => document.getElementById("query")?.focus()}><Search size={14} /><span>搜索简历…</span><kbd>⌘K</kbd></button>
+      <div className="brand"><span>IR</span><div><strong>resume-ir</strong></div></div>
       <nav aria-label="主导航">
-        <button className="nav-active" onClick={() => { setOverlay(null); resetDetail() }}><Search size={16} />搜索</button>
-        <button onClick={() => { resetDetail(); setOverlay("import") }}><FolderTree size={16} />简历来源</button>
+        <button className={overlay === null ? "nav-active" : ""} onClick={() => { setOverlay(null); resetDetail() }}><Search size={16} />搜索</button>
+        <button className={overlay === "import" ? "nav-active" : ""} onClick={() => { resetDetail(); setOverlay("import") }}><FolderTree size={16} />简历来源</button>
         <div className="nav-label">系统</div>
-        <button onClick={() => void openDiagnostics()}><ShieldCheck size={16} />隐私与诊断</button>
+        <button className={overlay === "diagnostics" ? "nav-active" : ""} onClick={() => void openDiagnostics()}><ShieldCheck size={16} />隐私与诊断</button>
+        <button className={overlay === "system" ? "nav-active" : ""} onClick={() => { resetDetail(); setOverlay("system") }}><Activity size={16} />系统状态</button>
       </nav>
       <div className="sidebar-status">
         <IndexServiceSummary lifecycle={lifecycle} service={service} status={authoritativeStatus} searchablePercent={searchablePercent} connectionMessage={connectionMessage} runtimeView={runtimeView} />
@@ -533,8 +534,7 @@ export function App() {
     </aside>
 
     <main className="main-shell">
-      <header className="topbar"><div><span>resume-ir</span><ChevronRight size={14} /><strong>搜索</strong></div><Pill tone={health === "ok" ? "ok" : lifecycle.state === "blocked" || runtimeView === "bridge_error" ? "err" : "warn"}>{lifecycleLabel(lifecycle, service, runtimeView)}</Pill></header>
-      <CapabilityMatrix lifecycle={lifecycle} status={authoritativeStatus} runtimeView={runtimeView} />
+      <header className="topbar"><div><strong>搜索</strong></div><Pill tone={health === "ok" ? "ok" : lifecycle.state === "blocked" || runtimeView === "bridge_error" ? "err" : "warn"}>{lifecycleLabel(lifecycle, service, runtimeView)}</Pill></header>
       <form className="search-head" onSubmit={runSearch}>
         <div className="query-box"><Search size={16} /><input id="query" value={query} onChange={(event) => setQuery(event.target.value)} maxLength={512} placeholder="输入关键词，空格分隔多个 Query（默认 AND 交集）" />{query && <button type="button" className="icon-button" aria-label="清空" onClick={() => setQuery("")}><X size={16} /></button>}</div>
         <div className="search-controls">
@@ -572,6 +572,7 @@ export function App() {
           roots={managedRoots}
           busy={["selecting", "submitting"].includes(importState)}
           importAllowed={importAllowed}
+          keywordCapabilityState={authoritativeStatus?.capabilities.keyword_search.state ?? "unavailable"}
           onAdd={() => void chooseImportRoot()}
           onScan={(root) => void requestRootScan(root)}
           onPause={(root) => void changeRootControl(root, "pause")}
@@ -581,6 +582,7 @@ export function App() {
         <section className="panel-card source-summary"><header><strong>当前本地索引</strong></header><dl><div><dt>已发现</dt><dd>{managedRoots.length > 0 ? sourceTotals.discovered.toLocaleString() : "—"}</dd></div><div><dt>可搜索</dt><dd>{authoritativeStatus?.searchable_documents ?? (managedRoots.length > 0 ? sourceTotals.searchable.toLocaleString() : "—")}</dd></div><div><dt>OCR 待处理</dt><dd>{authoritativeStatus?.ocr_queue_depth ?? (managedRoots.length > 0 ? sourceTotals.ocr.toLocaleString() : "—")}</dd></div><div><dt>失败</dt><dd>{managedRoots.length > 0 ? sourceTotals.failed.toLocaleString() : "—"}</dd></div></dl></section>
       </div>
     </SlideOver>}
+    {overlay === "system" && <SlideOver title="系统状态" subtitle="进程、运行时与操作能力的后端实时状态" onClose={() => setOverlay(null)}><div className="sheet-scroll system-status-content"><CapabilityMatrix lifecycle={lifecycle} status={authoritativeStatus} runtimeView={runtimeView} /></div></SlideOver>}
     {overlay === "diagnostics" && <SlideOver title="隐私与诊断" subtitle="敏感详情可在本地展示；导出证据仍保持脱敏" onClose={() => setOverlay(null)}><DiagnosticsContent state={diagnosticsState} message={diagnosticsMessage} diagnostics={diagnostics} onExport={() => void saveDiagnostics()} /></SlideOver>}
   </div>
 }
