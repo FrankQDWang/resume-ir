@@ -10,6 +10,13 @@ narrowly amended to synchronize that exact byte/digest identity and lock it to
 the authoritative packaged manifest; no model bytes, model ID, topology,
 inference behavior, IPC or performance threshold changes.
 
+The same preflight then reproduced an independent OCR readiness false negative:
+the reviewed OCR pack completed its bounded language probe successfully in
+2.023 seconds while the daemon killed it at the existing 2.000-second ceiling.
+#390 therefore also allows only that startup probe ceiling to rise to 10
+seconds. OCR page/job timeouts, runtime identity, languages, work concurrency,
+import semantics and benchmark endpoints remain unchanged.
+
 #390 is the sole active slice after the Core ML production-default migration
 closed. It adds one repository-owned macOS ARM experiment entrypoint so future
 full imports do not manually reconstruct attested sidecars, final runtime names,
