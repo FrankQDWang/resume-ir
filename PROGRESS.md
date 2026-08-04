@@ -1,5 +1,26 @@
 # Progress
 
+## Issue #390 product-composition experiment entrypoint contract
+
+#390 is the sole active slice after the Core ML production-default migration
+closed. It adds one repository-owned macOS ARM experiment entrypoint so future
+full imports do not manually reconstruct attested sidecars, final runtime names,
+reviewed embedding/Core ML/OCR/classifier/PDFium packs, daemon readiness,
+single-submit ownership, the no-OCR-drain endpoint or process cleanup.
+
+`preflight` must build and compose the same release sidecars and resource packs
+used by production, start an isolated empty daemon, require all four optional
+runtimes and all three import capabilities, then stop without reading a private
+resume root. `run --runs N` must create a fresh data directory per run, submit
+each managed-root import exactly once, preserve an acknowledged or unknown POST
+without retry, monitor the established product endpoint, retain only an
+explicitly requested final query-review run, and otherwise clean all products.
+
+This L0 orchestration slice changes no daemon IPC, production default, model,
+tokenizer, Batch, OCR, index, query or performance threshold. Verification is
+limited to public deterministic tests plus one private-data-free local
+preflight; no long private import is part of this implementation slice.
+
 ## Issue #383 native Core ML macOS ARM production-default closeout
 
 PR #388 is merged. The signed macOS ARM application now bundles the attested
