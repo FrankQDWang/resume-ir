@@ -42,6 +42,7 @@ const INPUT_SCHEMA: &str = "resume-ir-embedding-input-v1";
 const OUTPUT_SCHEMA: &str = "resume-ir-embedding-v1";
 const PACK_SCHEMA: &str = "resume-ir.embedding-runtime-pack.v1";
 const PACK_ID: &str = "intfloat-multilingual-e5-small-qint8-r1";
+const COREML_MODEL_ID: &str = "intfloat-multilingual-e5-small-coreml-fp16-r1";
 const UPSTREAM_MODEL_ID: &str = "intfloat/multilingual-e5-small";
 const UPSTREAM_REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
 const MODEL_ID: &str = PACK_ID;
