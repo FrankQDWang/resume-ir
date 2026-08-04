@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 import { inflateSync } from "node:zlib";
 
 const PNG_SIGNATURE = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 ]);
+const execFileAsync = promisify(execFile);
 
 function paeth(left, above, upperLeft) {
   const estimate = left + above - upperLeft;
@@ -73,7 +79,7 @@ function decodeRgbaPng(png) {
   return { width, height, pixels };
 }
 
-test("macOS icon has a standard rounded silhouette with transparent corners", async () => {
+test("macOS icon keeps the approved artwork inside a normalized optical margin", async () => {
   const icon = decodeRgbaPng(
     await readFile(new URL("../src-tauri/icons/icon.png", import.meta.url)),
   );
@@ -82,15 +88,66 @@ test("macOS icon has a standard rounded silhouette with transparent corners", as
   const alphaAt = (x, y) => icon.pixels[(y * icon.width + x) * 4 + 3];
   assert.equal(alphaAt(0, 0), 0);
   assert.equal(alphaAt(64, 64), 0);
-  assert.equal(alphaAt(512, 16), 255);
-  assert.equal(alphaAt(16, 512), 255);
+  assert.equal(alphaAt(512, 48), 0);
+  assert.equal(alphaAt(48, 512), 0);
+  assert.equal(alphaAt(512, 64), 255);
+  assert.equal(alphaAt(64, 512), 255);
   assert.equal(alphaAt(512, 512), 255);
+
+  for (let point = 0; point < 1024; point += 1) {
+    assert.equal(alphaAt(point, 48), 0, "top optical margin must be transparent");
+    assert.equal(alphaAt(point, 975), 0, "bottom optical margin must be transparent");
+    assert.equal(alphaAt(48, point), 0, "left optical margin must be transparent");
+    assert.equal(alphaAt(975, point), 0, "right optical margin must be transparent");
+  }
 
   let transparentPixels = 0;
   for (let index = 3; index < icon.pixels.length; index += 4) {
     if (icon.pixels[index] === 0) transparentPixels += 1;
   }
   const transparentRatio = transparentPixels / (icon.width * icon.height);
-  assert.ok(transparentRatio > 0.05, "icon corners must be visibly transparent");
-  assert.ok(transparentRatio < 0.12, "icon artwork must retain standard optical size");
+  assert.ok(transparentRatio > 0.22, `icon needs a visible optical margin: ${transparentRatio}`);
+  assert.ok(transparentRatio < 0.3, `icon artwork became too small: ${transparentRatio}`);
+  assert.equal(
+    createHash("sha256").update(icon.pixels).digest("hex"),
+    "3e8c7526f039a319af631044fe2d3dcd9d1bee71490b41e846b2a090a1c32257",
+    "icon artwork pixels changed outside the approved uniform resize",
+  );
+});
+
+test("the bundled ICNS contains the approved 1024-pixel icon", async (context) => {
+  if (process.platform !== "darwin") {
+    context.skip("iconutil is available only on macOS");
+    return;
+  }
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "resume-ir-icon-"));
+  const extractedIconset = join(temporaryDirectory, "extracted.iconset");
+  try {
+    await execFileAsync("/usr/bin/iconutil", [
+      "-c",
+      "iconset",
+      new URL("../src-tauri/icons/icon.icns", import.meta.url).pathname,
+      "-o",
+      extractedIconset,
+    ]);
+    const source = decodeRgbaPng(
+      await readFile(new URL("../src-tauri/icons/icon.png", import.meta.url)),
+    );
+    const bundled = decodeRgbaPng(
+      await readFile(join(extractedIconset, "icon_512x512@2x.png")),
+    );
+    assert.deepEqual(bundled, source);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("import stage motion is continuous with a static reduced-motion fallback", async () => {
+  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+  assert.doesNotMatch(styles, /steps\(/);
+  assert.doesNotMatch(styles, /typewriter-reveal/);
+  assert.match(styles, /@keyframes status-message-enter/);
+  assert.match(styles, /@keyframes status-message-flow/);
+  assert.match(styles, /prefers-reduced-motion: reduce/);
+  assert.match(styles, /-webkit-text-fill-color: currentColor/);
 });

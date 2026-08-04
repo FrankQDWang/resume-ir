@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import type { CapabilityState, SourceRoot } from "./daemon"
 
@@ -133,10 +133,6 @@ export function ImportProgress({
         key={presentation.stageMessage}
         className="streaming-status-text"
         aria-hidden="true"
-        style={{
-          "--typewriter-characters": presentation.stageMessage.length,
-          "--typewriter-duration": `${Math.min(1800, Math.max(360, presentation.stageMessage.length * 55))}ms`,
-        } as CSSProperties}
       >
         {presentation.stageMessage}
       </span>
