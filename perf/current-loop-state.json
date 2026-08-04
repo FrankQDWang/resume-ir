@@ -1,16 +1,16 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
-  "evidence_lane": "w0_docs",
+  "workflow_state": "evidence_review",
+  "experiment_state": "reverted",
+  "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "cea0d719e8088b7722fb6fe9dba14187dffc18c6ba649282d755e4a0c49e0026",
+    "active_goal_sha256": "9ef80fa072529dec6625fbb295f18add67c67e536aca1f822f09b842f823ff83",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "ff3d15046d99263560edf9ac4c3404a3792028ad"
+    "git_head_sha": "89d7802e434fa9760dc83dde45d199b6b27e765e"
   },
   "current_slice": "#409 deduplicate Core ML B1/B4 weights with a multifunction model",
   "hypothesis": {
@@ -18,11 +18,16 @@
     "acceptance_cell": "w0_docs",
     "expected_effect": "one macOS 15 multifunction MLProgram shares the existing fixed B1x512 and B4x512 E5 weights, reduces the Core ML-only DMG to at most 320000000 bytes, and preserves warm inference plus the full-product endpoint within 5 percent",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/409",
-    "after_measurement_ref": "pending",
-    "reprofile_ref": "pending",
-    "decision": "pending"
+    "after_measurement_ref": "PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback",
+    "reprofile_ref": "PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback",
+    "decision": "reverted"
   },
   "transition_history": [
+    {
+      "from": "slice_selected",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3462,7 +3467,14 @@
       {"command":"npm exec -- vitest run","exit_code":0,"evidence_ref":"PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"},
       {"command":"npm run build","exit_code":0,"evidence_ref":"PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"},
       {"command":"local public-preview search, source and system-status visual inspection","exit_code":0,"evidence_ref":"PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"},
-      {"command":"performance, autonomous, loop, PR-budget, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"}
+      {"command":"performance, autonomous, loop, PR-budget, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation"},
+      {"command":"Issue #409 balanced B1 and B4 multifunction warm screen","exit_code":0,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"},
+      {"command":"Issue #409 exact Worktree Core ML DMG composition","exit_code":0,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"},
+      {"command":"Issue #409 OCR-enabled 8720-document product import exceeded the frozen performance ceiling","exit_code":1,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"},
+      {"command":"Issue #409 multifunction production rollback and experiment cleanup","exit_code":0,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"},
+      {"command":"./scripts/ci/verify-local.sh stopped on one PDF 1 ms timeout classification","exit_code":101,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"},
+      {"command":"exact PDF timeout case isolated rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"},
+      {"command":"unmodified main@89d7802 complete 14-test PDF suite","exit_code":0,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3476,11 +3488,11 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-404-macos-provider-editions-2026-08-04",
-  "state_version": 635,
-  "previous_state_hash": "df11e1cc39d84e4d09610687946f2e66baa369d43be5d1031b0866b0d0d8965e",
-  "expected_state_version": 635,
-  "last_confirmed_side_effect": "issue_409_opened_and_multifunction_hypothesis_registered",
+  "run_id": "issue-409-coreml-multifunction-rollback-2026-08-04",
+  "state_version": 636,
+  "previous_state_hash": "3e6fcf11841b3964a7a0fa82f1f8e486dbc73ae904e1af5a32c58e9450c0df63",
+  "expected_state_version": 636,
+  "last_confirmed_side_effect": "multifunction_full_import_rejected_and_production_rollback_complete",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

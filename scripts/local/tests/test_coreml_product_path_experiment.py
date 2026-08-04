@@ -17,6 +17,16 @@ SPEC.loader.exec_module(module)
 
 
 class ProductExperimentTests(unittest.TestCase):
+    def test_product_runner_accepts_the_production_coreml_tokenizer_identity(self) -> None:
+        manifest = json.loads(
+            (
+                module.REPO
+                / "apps/desktop/resources/embedding/aarch64-apple-darwin/coreml-tokenizer-pack.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["schema_version"], module.COREML_TOKENIZER_SCHEMA)
+        self.assertEqual(manifest["model_id"], module.MODEL_ID)
+
     def test_coreml_manifest_pin_matches_authoritative_pack(self) -> None:
         manifest = (module.REPO / "apps/desktop/resources/embedding/aarch64-apple-darwin/coreml-runtime-pack.json").read_bytes()
         source = (module.REPO / "crates/embedding-runtime/src/coreml_product_experiment.rs").read_text()
