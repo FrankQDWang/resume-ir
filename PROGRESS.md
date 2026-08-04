@@ -2,6 +2,14 @@
 
 ## Issue #390 product-composition experiment entrypoint contract
 
+The first private-data-free preflight exposed a predecessor production-default
+packaging drift before any import submission: the reviewed packaged Core ML
+manifest is 2,259 bytes with digest `11956a...`, while the embedding runtime
+still pins the pre-normalization 2,260-byte `2eb412...` manifest. The slice is
+narrowly amended to synchronize that exact byte/digest identity and lock it to
+the authoritative packaged manifest; no model bytes, model ID, topology,
+inference behavior, IPC or performance threshold changes.
+
 #390 is the sole active slice after the Core ML production-default migration
 closed. It adds one repository-owned macOS ARM experiment entrypoint so future
 full imports do not manually reconstruct attested sidecars, final runtime names,
