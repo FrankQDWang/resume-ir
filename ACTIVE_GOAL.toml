@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#402"
-name = "bind_coreml_worker_into_macos_worktree_snapshot"
+issue = "#404"
+name = "separate_coreml_tokenizer_pack_from_onnx_inference_assets"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
@@ -22,16 +22,31 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #402 repairs macOS build-source composition by moving the production Core ML worker under the already snapshot-bound desktop build tree; it changes no runtime behavior, model, IPC, persistence or query semantics."
+scope_exception_reason = "No exception is used. Issue #404 is delivered as one contract-only transition followed by two buildable implementation PRs within the normal 15-file budget: the default Core ML-only macOS 15 composition first, then the separately named ONNX-only macOS 14 compatibility composition."
 allowed_paths = [
-  "scripts/local/coreml-resident-worker.swift",
-  "apps/desktop/scripts/coreml-resident-worker.swift",
+  "crates/embedding-runtime/src/main.rs",
+  "crates/embedding-runtime/src/runtime_pack.rs",
+  "crates/embedding-runtime/src/tests.rs",
+  "crates/daemon/src/runtime_pack/embedding.rs",
+  "crates/daemon/src/runtime_pack/embedding_tests.rs",
   "apps/desktop/scripts/prepare-sidecar.mjs",
   "apps/desktop/scripts/prepare-sidecar.node-test.mjs",
-  "apps/desktop/scripts/macos-source-identity.node-test.mjs",
-  "apps/desktop/scripts/macos-worktree-release.node-test.mjs",
-  "apps/desktop/scripts/macos-installed-main-acceptance/immutable-runtime-packs.mjs",
-  "apps/desktop/scripts/macos-installed-main-acceptance/immutable-build-source.node-test.mjs",
+  "apps/desktop/resources/embedding/aarch64-apple-darwin/coreml-tokenizer-pack.json",
+  "apps/desktop/package.json",
+  "apps/desktop/scripts/macos-bundle-composition.mjs",
+  "apps/desktop/scripts/macos-bundle-evidence.node-test.mjs",
+  "apps/desktop/scripts/macos-dmg.node-test.mjs",
+  "apps/desktop/scripts/macos-test-release.mjs",
+  "apps/desktop/scripts/macos-worktree-install.mjs",
+  "apps/desktop/scripts/macos-worktree-install.node-test.mjs",
+  "apps/desktop/scripts/macos-worktree-release.mjs",
+  "apps/desktop/scripts/run-tauri.mjs",
+  "apps/desktop/scripts/verify-bundled-sidecar.mjs",
+  "apps/desktop/scripts/verify-macos-dmg.mjs",
+  "apps/desktop/src-tauri/Cargo.toml",
+  "apps/desktop/src-tauri/src/daemon_lifecycle/runtime_candidates.rs",
+  "apps/desktop/src-tauri/tauri.macos.conf.json",
+  "apps/desktop/src-tauri/tauri.macos14-onnx.conf.json",
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
   "perf/current-loop-state.json",
@@ -39,24 +54,23 @@ allowed_paths = [
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
 ]
-allowed_paths_role = "macos_worktree_snapshot_coreml_worker_composition_tests_and_state_paths"
+allowed_paths_role = "macos_coreml_and_onnx_provider_edition_runtime_pack_build_install_tests_and_state_paths"
 primary_benchmark_lane = "smoke"
-observation_stage = "L0_macos_build_source_provenance"
+observation_stage = "L0_macos_provider_edition_composition"
 optimization_layer = "L0"
 optimization_layer_selected = true
-hypothesis = "moving the production Core ML Swift worker under apps/desktop binds it to the existing worktree snapshot identity and copying rules, allowing the standard immutable Worktree DMG build to succeed without widening the snapshot to local experiment scripts"
-expected_delta = "the Core ML worker changes the worktree source digest, is copied into the immutable snapshot, and prepare-sidecar compiles only that snapshot-local source during a successful standard Worktree DMG build"
-negative_control = "copying the worker after snapshot capture, resolving it from the mutable source checkout, or broadly admitting scripts/local must not satisfy provenance acceptance"
-implementation_boundary = "macOS desktop build-source ownership, sidecar preparation path and synthetic source-identity/snapshot tests only; no runtime behavior, API, IPC, persistence, model, query, import or performance threshold change"
-resident_pool_workload = "not applicable; the worker source is a build-time input and no resident inference experiment runs in this slice"
-resident_pool_acceptance = "not applicable; source identity, immutable snapshot and full Worktree DMG composition checks own acceptance"
-full_product_acceptance = "npm run bundle:macos:worktree --prefix apps/desktop must produce a bounded artifact receipt whose v4 composition is built entirely from the immutable snapshot containing the Core ML worker"
+hypothesis = "two explicit macOS ARM editions can remove duplicate inference providers without changing inference behavior: the default macOS 15 package contains only the existing Core ML provider plus reviewed tokenizer/config, while the separately named macOS 14 compatibility package contains only the existing Dynamic U8S8 ONNX provider"
+expected_delta = "both immutable Worktree DMG commands complete with edition-bound receipts and exact composition: Core ML declares macOS 15 and contains no ONNX model/runtime bytes; ONNX declares macOS 14 and contains no Core ML worker/model bytes; the default local install starts the Core ML model ID with all four runtimes and eight capabilities available"
+negative_control = "a mixed-provider package, mismatched artifact edition, wrong minimum OS, missing provider asset, unknown provider/schema, digest drift or model-ID mismatch must fail before install or resident readiness"
+implementation_boundary = "macOS ARM provider-specific runtime-pack parsing, daemon validation, desktop provider selection, Tauri package variants, immutable resource staging, DMG composition/identity and local internal-test installation only; no public release publication"
+resident_pool_workload = "public-synthetic runtime-pack and resident startup fixtures only; no private import or query run"
+resident_pool_acceptance = "Core ML and ONNX provider packs each validate only their exact role set and preserve the current resident request, cancellation, timeout and vector semantics"
+full_product_acceptance = "build and inspect one immutable Core ML-only macOS 15 DMG and one immutable ONNX-only macOS 14 DMG, then install only the Core ML edition locally and require process_state ready, all optional runtimes available and all eight capabilities available"
 raw_profile_boundary = "no private path, filename, resume text, raw query, candidate result, token, PID, log, trace, database, index, model or cache bytes may enter tests, screenshots, git or GitHub"
-rollback_condition = "revert if the standard Worktree DMG build still misses the worker, any build input resolves outside the immutable snapshot, source identity no longer changes with worker content, or provenance and symlink rejection weaken"
+rollback_condition = "revert if tokenizer/model bytes change, inference or resident semantics change, either edition contains both providers or lacks its selected provider, minimum OS/edition identity can drift, ONNX compatibility weakens, or the installed Core ML edition cannot publish ready runtimes and capabilities"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
-  "production_runtime_default_change",
   "native_ort_runtime_upgrade",
   "metadata_schema_change",
   "pooling_change",
@@ -69,8 +83,8 @@ forbidden_scope = [
   "query_semantics_change",
   "ipc_or_diagnostics_contract_change",
   "persistence_schema_change",
-  "runtime_behavior_change",
-  "broad_scripts_local_snapshot_expansion",
+  "coreml_or_onnx_model_byte_change",
+  "coreml_worker_source_change",
   "windows_or_linux",
   "raw_private_output",
   "raw_query_or_result_publication",
@@ -78,7 +92,7 @@ forbidden_scope = [
   "offline_graph_optimization",
   "batch8_batch16_or_batch32",
   "private_full_import_execution",
-  "dmg_install_or_release_publication",
+  "public_release_publication",
   "tauri_command_change",
   "daemon_status_or_source_root_schema_change",
   "backend_poll_frequency_change",
