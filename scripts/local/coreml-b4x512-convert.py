@@ -26,15 +26,15 @@ SYNTHETIC_TEXTS = (
 
 
 class E5Embedding(torch.nn.Module):
-    def __init__(self, model: torch.nn.Module) -> None:
+    def __init__(self, model: torch.nn.Module, batch: int) -> None:
         super().__init__()
         self.model = model
         self.register_buffer(
             "position_ids",
-            torch.arange(TOKENS, dtype=torch.int64).unsqueeze(0).expand(BATCH, -1),
+            torch.arange(TOKENS, dtype=torch.int64).unsqueeze(0).expand(batch, -1),
         )
         self.register_buffer(
-            "token_type_ids", torch.zeros((BATCH, TOKENS), dtype=torch.int64)
+            "token_type_ids", torch.zeros((batch, TOKENS), dtype=torch.int64)
         )
 
     def forward(
@@ -57,6 +57,42 @@ def write_tensor(path: Path, values: np.ndarray, dtype: np.dtype[object]) -> Non
     path.write_bytes(contiguous.tobytes(order="C"))
 
 
+def convert_batch(
+    source: torch.nn.Module,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    batch: int,
+    output_dir: Path,
+) -> torch.Tensor:
+    wrapped = E5Embedding(source, batch).eval()
+    with torch.inference_mode():
+        reference = wrapped(input_ids, attention_mask)
+        traced = torch.jit.trace(wrapped, (input_ids, attention_mask), strict=True)
+        replay = traced(input_ids, attention_mask)
+    if tuple(reference.shape) != (batch, DIMENSION) or not torch.allclose(
+        reference, replay, rtol=1e-5, atol=1e-5
+    ):
+        raise RuntimeError("traced source model did not preserve the reference output")
+
+    package = ct.convert(
+        traced,
+        convert_to="mlprogram",
+        minimum_deployment_target=ct.target.macOS15,
+        compute_precision=ct.precision.FLOAT16,
+        inputs=[
+            ct.TensorType(name="input_ids", shape=(batch, TOKENS), dtype=np.int32),
+            ct.TensorType(
+                name="attention_mask", shape=(batch, TOKENS), dtype=np.int32
+            ),
+        ],
+        outputs=[ct.TensorType(name="embeddings", dtype=np.float32)],
+    )
+    package.author = "resume-ir local Core ML experiment"
+    package.short_description = f"Fixed B{batch}x512 multilingual E5 FP16"
+    package.save(output_dir / f"e5-b{batch}x512.mlpackage")
+    return reference
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -66,7 +102,6 @@ def main() -> int:
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=REVISION)
     source = AutoModel.from_pretrained(MODEL_ID, revision=REVISION).eval()
-    wrapped = E5Embedding(source).eval()
     encoded = tokenizer(
         SYNTHETIC_TEXTS,
         padding="max_length",
@@ -79,31 +114,21 @@ def main() -> int:
     if tuple(input_ids.shape) != (BATCH, TOKENS):
         raise RuntimeError("tokenizer did not produce the frozen B4x512 shape")
 
-    with torch.inference_mode():
-        reference = wrapped(input_ids, attention_mask)
-        traced = torch.jit.trace(wrapped, (input_ids, attention_mask), strict=True)
-        replay = traced(input_ids, attention_mask)
-    if tuple(reference.shape) != (BATCH, DIMENSION) or not torch.allclose(
-        reference, replay, rtol=1e-5, atol=1e-5
-    ):
-        raise RuntimeError("traced source model did not preserve the reference output")
-
-    package = ct.convert(
-        traced,
-        convert_to="mlprogram",
-        minimum_deployment_target=ct.target.macOS15,
-        compute_precision=ct.precision.FLOAT16,
-        inputs=[
-            ct.TensorType(name="input_ids", shape=(BATCH, TOKENS), dtype=np.int32),
-            ct.TensorType(
-                name="attention_mask", shape=(BATCH, TOKENS), dtype=np.int32
-            ),
-        ],
-        outputs=[ct.TensorType(name="embeddings", dtype=np.float32)],
+    reference = convert_batch(source, input_ids, attention_mask, BATCH, output_dir)
+    query = tokenizer(
+        ("query: " + "machine learning retrieval ranking " * 110,),
+        padding="max_length",
+        truncation=True,
+        max_length=TOKENS,
+        return_tensors="pt",
     )
-    package.author = "resume-ir local Issue #380 experiment"
-    package.short_description = "Fixed B4x512 multilingual E5 FP16 tensor screen"
-    package.save(output_dir / "e5-b4x512.mlpackage")
+    convert_batch(
+        source,
+        query["input_ids"].to(torch.int32),
+        query["attention_mask"].to(torch.int32),
+        1,
+        output_dir,
+    )
 
     write_tensor(output_dir / "input_ids.i32le", input_ids.numpy(), np.dtype("<i4"))
     write_tensor(
@@ -125,6 +150,7 @@ def main() -> int:
                 "schema_version": "resume-ir.coreml-b4x512-conversion.v1",
                 "model_revision_matches": True,
                 "batch": BATCH,
+                "product_batch_sizes": [1, 4],
                 "tokens": TOKENS,
                 "dimension": DIMENSION,
                 "source_trace_matches": True,
