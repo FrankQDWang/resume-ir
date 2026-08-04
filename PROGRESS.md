@@ -1,5 +1,36 @@
 # Progress
 
+## Issue #380 native Core ML fixed-B4x512 tensor experiment contract
+
+#380 is the only active performance slice after the exact CPU INT4 candidate
+failed and was removed. It tests one local macOS M4/H2 L1 backend hypothesis:
+directly convert the exact upstream multilingual E5 revision to an FP16 Core ML
+MLProgram with fixed B4x512 integer token inputs and in-model attention-mask
+mean pooling plus L2 normalization.
+
+This first slice is deliberately tensor-only. The retained Rust runtime remains
+the authority for raw-text framing, query/passage prefixes, tokenizer, Batch
+construction, cancellation and lifecycle. A bounded private Swift worker may
+receive only identical public-synthetic token tensors for the experimental Core
+ML prediction. Production model identity, vectors, indexes, IPC, runtime pack,
+bundle composition, daemon topology and default behavior remain unchanged.
+
+The retained #372 Dynamic U8S8 ORT 1.27 fixed-B4x512 runtime is the control.
+Cold compile/load and warm resident-ready time are reported separately; the
+decision uses warmed compiled-model B4 wall latency in balanced paired order.
+The candidate must lower that latency by at least 25% with a paired 95% interval
+wholly above zero. Source-PyTorch/Core-ML outputs must be finite and unit-
+normalized with minimum cosine at least 0.995 and mean cosine at least 0.999.
+Core ML compute-plan aggregates must show transformer-heavy estimated cost is
+not CPU-dominant, lifecycle must pass, and the H2 private or anonymous peak must
+remain at or below 3,072 MiB.
+
+No private resume or query root may be read in #380. The 8,720-document
+OCR-enabled full import, new model ID, rebuild, real-query review, other Macs,
+8GB/16GB tiers and production migration are excluded. A failing result deletes
+all experimental capability and artifacts. A winner may only open a separate
+product-path Issue that reuses the accepted 513.675-second #372 baseline.
+
 ## Issue #375 CPU INT4 weight-only negative closeout
 
 #375 tested one L1 model-representation hypothesis against the exact current
