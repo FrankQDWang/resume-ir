@@ -1,28 +1,33 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "accepted",
-  "evidence_lane": "gui_manual",
+  "workflow_state": "slice_selected",
+  "experiment_state": "hypothesis_registered",
+  "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "9035b39e26f1a2e4555fe58746680105833b4e807a4592e0a6e7c08bee494d3b",
+    "active_goal_sha256": "591830459854d8967db3e8aefdeb82ce7adb9b5831654ede2c62f11a7eb1467d",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "3be1c5c3300bdb50be7da189ca6a9515d247c7b5"
   },
-  "current_slice": "#396 truthful streaming import progress and dedicated system status",
+  "current_slice": "#399 source-root deletion preempts every import phase",
   "hypothesis": {
-    "id": "issue-396-truthful-streaming-import-ui",
-    "acceptance_cell": "gui_manual",
-    "expected_effect": "the GUI uses existing backend observations to ease progress without prediction, type observed status accessibly, and reserve full keyword readiness for complete scan plus zero OCR backlog plus available keyword capability",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/396",
-    "after_measurement_ref": "PROGRESS.md#issue-396-truthful-streaming-import-progress-implementation",
-    "reprofile_ref": "not_applicable_frontend_contract_slice",
-    "decision": "accepted"
+    "id": "issue-399-source-root-privacy-revocation",
+    "acceptance_cell": "smoke",
+    "expected_effect": "deletion during any active root-bound stage completes the durable receipt, removes all derived state, preserves source files and leaves the daemon responsive",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/399",
+    "after_measurement_ref": "pending_issue_399_synthetic_red_green_evidence",
+    "reprofile_ref": "not_applicable_product_correctness_slice",
+    "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/399"
+    },
     {
       "from": "verification_active",
       "to": "evidence_review",
@@ -3416,15 +3421,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-396-truthful-streaming-import-ui-2026-08-04",
-  "state_version": 624,
+  "run_id": "issue-399-source-root-privacy-revocation-2026-08-04",
+  "state_version": 625,
   "previous_state_hash": "a0d5f1b7ee20894f0dc1d01603409e59523b68708ef80419319ef28a2737bfef",
-  "expected_state_version": 624,
-  "last_confirmed_side_effect": "issue_396_frontend_implementation_and_local_gui_evidence_accepted",
+  "expected_state_version": 625,
+  "last_confirmed_side_effect": "issue_399_opened_and_source_root_privacy_revocation_hypothesis_registered",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#396",
+    "primary_issue": "#399",
     "active_prs": [],
     "open_blockers": []
   }

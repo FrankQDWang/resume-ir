@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-390-to-396-truthful-streaming-import-ui-2026-08-04",
-  "from_issue": "#390",
-  "to_issue": "#396",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/390#issuecomment-5175342543",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/396",
-  "base_active_goal_sha256": "a49d97fa5bd077daf5ed1fa8fa18f8e4c8007ec0f1df756bcc1f06afd7fd5ad4",
+  "transition_id": "issue-396-to-399-source-root-privacy-revocation-2026-08-04",
+  "from_issue": "#396",
+  "to_issue": "#399",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/396#issuecomment-5176114794",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/399",
+  "base_active_goal_sha256": "9035b39e26f1a2e4555fe58746680105833b4e807a4592e0a6e7c08bee494d3b",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "PROGRESS.md",

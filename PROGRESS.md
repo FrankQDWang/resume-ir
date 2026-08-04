@@ -1,5 +1,22 @@
 # Progress
 
+## Issue #399 source-root deletion privacy-revocation contract
+
+Issue #399 is the sole active correctness slice. Exact-main installed evidence
+showed that a deletion request accepted while OCR backlog remained could persist
+a durable receipt in `Quiescing` and then stop the daemon with
+`runtime_integrity`, leaving all affected derived state present. This is a
+backend completion failure, not a frontend-only display defect or API rejection.
+
+The existing schema-v32 contract already requires deletion to fence every
+root-bound producer before removing search projections and purging derived
+facts. This slice makes that contract executable at every phase: discovery,
+classification, parsing, embedding, OCR, index publication, recovery and idle.
+Synthetic regressions must first reproduce the failure, then prove one completed
+receipt, zero residual tasks and derived state, unchanged source files, restart
+recovery and a still-responsive daemon. It changes no public API, wire schema,
+persistence schema, model, query semantics or performance threshold.
+
 ## Issue #396 truthful streaming import progress implementation
 
 The frontend-only implementation is complete. The search home no longer
