@@ -153,6 +153,9 @@ pub(crate) fn resume_pending(
         .incomplete_source_root_deletions()
         .map_err(|_| CommandFailure::Internal)?;
     for receipt in &pending {
+        let Some(_registration) = WorkerRegistration::acquire(&receipt.root_id)? else {
+            continue;
+        };
         resume(data_dir, store, processing_contract, &receipt.root_id)?;
     }
     Ok(pending.len())
@@ -203,7 +206,7 @@ fn resume(
         store
             .set_source_root_state(root_id, root.state, SourceWatcherState::Paused, now)
             .map_err(|_| CommandFailure::Internal)?;
-        acquire_root_task_quiescence(data_dir, store, &root.canonical_path)
+        acquire_root_task_quiescence(data_dir, store, &root.canonical_path, now)
     })
     .transpose()?
     .unwrap_or_default();
@@ -211,6 +214,9 @@ fn resume(
     if phase == SourceRootDeletionPhase::Quiescing {
         let documents = store
             .source_root_deletion_document_ids(root_id)
+            .map_err(|_| CommandFailure::Internal)?;
+        store
+            .purge_ingest_jobs_for_documents(&documents)
             .map_err(|_| CommandFailure::Internal)?;
         if !crate::ocr_worker::wait_for_documents_to_quiesce(&documents, Duration::from_secs(5)) {
             return Err(CommandFailure::ServiceUnavailable(
@@ -273,10 +279,7 @@ fn publish_root_removal(
     store
         .purge_import_tasks_for_deleted_documents(&documents)
         .map_err(|_| CommandFailure::Internal)?;
-    store
-        .purge_ingest_jobs_for_documents(&documents)
-        .map(|_| ())
-        .map_err(|_| CommandFailure::Internal)
+    Ok(())
 }
 
 fn purge_root_data(
@@ -324,6 +327,7 @@ fn acquire_root_task_quiescence(
     data_dir: &Path,
     store: &OwnedMetaStore,
     canonical_root_path: &str,
+    now: meta_store::UnixTimestamp,
 ) -> Result<Vec<ImportTaskOwnerLock>, CommandFailure> {
     const QUIESCE_TIMEOUT: Duration = Duration::from_secs(5);
     const POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -334,6 +338,12 @@ fn acquire_root_task_quiescence(
     let mut owners = Vec::with_capacity(tasks.len());
     let deadline = Instant::now() + QUIESCE_TIMEOUT;
     for task in tasks {
+        let cancel_at = meta_store::UnixTimestamp::from_unix_seconds(
+            now.as_unix_seconds().max(task.updated_at.as_unix_seconds()),
+        );
+        store
+            .cancel_import_task(&task.id, cancel_at)
+            .map_err(|_| CommandFailure::Internal)?;
         loop {
             match ImportTaskOwnerLock::try_acquire(data_dir, &task.id) {
                 Ok(Some(owner)) => {
@@ -355,9 +365,17 @@ fn acquire_root_task_quiescence(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, time::Duration};
+    use std::cell::Cell;
+    use std::fs;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use meta_store::{
+        DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, SourceRootDeletionPhase,
+        UnixTimestamp,
+    };
 
     use super::drive_worker_until_complete;
+    use super::{resume_pending, WorkerRegistration};
     use crate::command_failure::CommandFailure;
 
     #[test]
@@ -378,5 +396,57 @@ mod tests {
         assert_eq!(attempts.get(), 7);
         let expected_ms = [250, 1_000, 4_000, 15_000, 30_000, 30_000];
         assert_eq!(delays, expected_ms.map(Duration::from_millis));
+    }
+
+    #[test]
+    fn pending_recovery_does_not_bypass_the_active_deletion_owner() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp = std::env::temp_dir().join(format!(
+            "resume-ir-source-root-deletion-single-owner-{}-{nonce}",
+            std::process::id()
+        ));
+        let data_dir = temp.join("data");
+        let source = temp.join("source");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&source).unwrap();
+
+        let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => panic!("test data directory contended"),
+        };
+        let store = owner.open_store().unwrap();
+        store.run_migrations().unwrap();
+        let contract = import_pipeline::current_import_processing_contract(
+            &import_pipeline::ImportOptions::default(),
+        )
+        .unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_800_000);
+        store
+            .activate_migration_rebuild_contract(&contract, now)
+            .unwrap();
+        let canonical_source = fs::canonicalize(&source).unwrap();
+        let source_path = canonical_source.to_str().unwrap();
+        let root = store
+            .register_source_root(source_path, source_path, "Synthetic source", now)
+            .unwrap();
+        store.begin_source_root_deletion(&root.id, now).unwrap();
+        let registration = WorkerRegistration::acquire(&root.id)
+            .unwrap_or_else(|_| panic!("deletion worker registry must be available"))
+            .expect("synthetic deletion owner must register");
+
+        assert!(resume_pending(&data_dir, &store, &contract).is_ok());
+        assert_eq!(
+            store.source_root_deletion(&root.id).unwrap().unwrap().phase,
+            SourceRootDeletionPhase::Requested,
+            "pending recovery must not execute behind the active deletion owner"
+        );
+        drop(registration);
+
+        drop(store);
+        drop(owner);
+        fs::remove_dir_all(temp).unwrap();
     }
 }

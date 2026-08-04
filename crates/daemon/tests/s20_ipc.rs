@@ -13,9 +13,10 @@ use import_pipeline::{
     ImportOptions, ImportTaskOwnerLock,
 };
 use meta_store::{
+    ClassificationStatus, ContentDigest, Document, DocumentId, DocumentStatus, FileExtension,
     ImportRootControlStatus, ImportRootKind, ImportRootPreset, ImportScanProfile, ImportScanScope,
-    ImportTask, ImportTaskId, ImportTaskStatus, OwnedMetaStore, ReadMetaStore,
-    SourceRootDeletionPhase, UnixTimestamp,
+    ImportTask, ImportTaskId, ImportTaskStatus, IngestJobId, OwnedMetaStore, ReadMetaStore,
+    ReasonCode, SourceRevision, SourceRevisionTriage, SourceRootDeletionPhase, UnixTimestamp,
 };
 
 mod support;
@@ -285,6 +286,7 @@ fn source_root_delete_returns_accepted_without_restarting_or_blocking_a_second_r
     };
     let root_a_id = root_a.id.as_str();
     let root_b_id = root_b.id.as_str();
+    let ocr_job = seed_ocr_backlog_for_root(&data_dir, &root_a, now);
     let active_task = seed_running_import_task(
         &data_dir,
         "source-root-delete-quiescence",
@@ -330,12 +332,28 @@ fn source_root_delete_returns_accepted_without_restarting_or_blocking_a_second_r
             "schema_version": "resume-ir.root-deletion-receipt.v1",
             "status": "deleting",
             "root_id": root_a_id,
-            "affected_documents": 0,
+            "affected_documents": 1,
             "removed_documents": 0,
             "source_files_deleted": false,
         })
     );
     assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    let cancellation_deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let cancelled = ReadMetaStore::open_data_dir(&data_dir)
+            .unwrap()
+            .is_import_task_cancelled(&active_task)
+            .unwrap();
+        if cancelled {
+            break;
+        }
+        assert!(
+            Instant::now() < cancellation_deadline,
+            "source-root deletion did not preempt the active import task"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
 
     let deleting_error = post_source_root_register(
         &endpoint,
@@ -388,6 +406,11 @@ fn source_root_delete_returns_accepted_without_restarting_or_blocking_a_second_r
     assert_ne!(replacement["root"]["root_id"].as_str().unwrap(), root_a_id);
     assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
     assert!([source_a, source_b].iter().all(|source| source.is_dir()));
+    assert!(ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .ingest_job_by_id(&ocr_job)
+        .unwrap()
+        .is_none());
 
     for _ in 0..=remaining_poll_requests + remaining_readiness_requests {
         assert_ready_status(&http_get(&endpoint, &token));
@@ -3284,6 +3307,75 @@ fn seed_queued_import_task(
     };
     support::insert_import_task_with_scope(&store, &task, &scope);
     task_id
+}
+
+fn seed_ocr_backlog_for_root(
+    data_dir: &Path,
+    root: &meta_store::SourceRoot,
+    now: UnixTimestamp,
+) -> IngestJobId {
+    let store = open_owned_store(data_dir);
+    let source = Path::new(&root.canonical_path).join("synthetic-ocr.pdf");
+    let bytes = b"synthetic queued OCR source";
+    fs::write(&source, bytes).unwrap();
+    let document_id = DocumentId::from_non_secret_parts(&["s20", "source-root-delete-ocr"]);
+    let revision = SourceRevision::for_content(
+        document_id.clone(),
+        ContentDigest::from_bytes(bytes),
+        bytes.len() as u64,
+    );
+    store
+        .upsert_document(&Document {
+            id: document_id.clone(),
+            source_uri: path_str(&source).to_string(),
+            normalized_path: path_str(&source).to_string(),
+            file_name: "synthetic-ocr.pdf".to_string(),
+            extension: FileExtension::Pdf,
+            byte_size: bytes.len() as u64,
+            mtime: now,
+            content_hash: Some(revision.content_hash.as_str().to_string()),
+            text_hash: None,
+            is_deleted: false,
+            created_at: now,
+            updated_at: now,
+            status: DocumentStatus::OcrRequired,
+        })
+        .unwrap();
+    store.insert_source_revision(&revision).unwrap();
+    let contract = support::reviewed_processing_contract();
+    let triage_epoch = contract.source_triage_epoch();
+    store
+        .insert_source_revision_triage(&SourceRevisionTriage {
+            source_revision_id: revision.id.clone(),
+            status: ClassificationStatus::OcrBacklog,
+            triage_epoch: triage_epoch.as_str().to_string(),
+            reason_codes: vec![ReasonCode::OcrRequired],
+            triaged_at: now,
+        })
+        .unwrap();
+    store
+        .begin_scan(
+            &root.id,
+            "source-root-delete-ocr-scan",
+            meta_store::ScanTrigger::Manual,
+            now,
+        )
+        .unwrap();
+    store
+        .observe_source_occurrence(
+            &root.id,
+            "synthetic-ocr.pdf",
+            &document_id,
+            &revision.id,
+            "source-root-delete-ocr-scan",
+            now,
+        )
+        .unwrap();
+    store
+        .enqueue_ocr_job_for_source_triage(&revision.id, &triage_epoch, now)
+        .unwrap()
+        .job
+        .id
 }
 
 fn seed_completed_import_scope(data_dir: &Path, label: &str, root: &Path) {

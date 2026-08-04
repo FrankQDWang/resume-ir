@@ -1,5 +1,47 @@
 # Progress
 
+## Issue #399 source-root deletion preemption implementation
+
+The backend failure was reproduced and separated from the frontend. The live
+receipt had reached `Publishing`; the search head was `RepairBlocked` with a
+`RuntimeInvariant`, and the abandoned publication had already produced both
+full-text and vector artifacts before its exact retirement was deferred. The
+latest import task itself was complete, so classifier failure and an unfinished
+ordinary import were not the cause.
+
+The deterministic red regression exposed two deletion executors for one durable
+receipt. The API worker registered exclusive ownership, but the resident import
+loop's pending-deletion recovery called the same state machine without that
+registry. With an owner deliberately held, the old recovery path still advanced
+the receipt from `Requested` to `Complete`. It can therefore publish while the
+registered worker purges metadata, causing the observed post-artifact commit
+failure and global index block.
+
+Pending recovery now acquires the same root-scoped deletion ownership as API and
+startup workers. Deletion also writes cancellation for every active root import
+before waiting for its owner lock, removes all root-bound ingest/OCR jobs before
+waiting for active OCR to quiesce, and only then publishes projection removal
+and purges metadata. Source files remain outside the deletion boundary.
+
+Focused evidence is green: the ownership regression, bounded retry tests,
+Requested/Publishing restart recovery, affected-crate all-target/all-feature
+Clippy, and the native IPC deletion witness. The native witness includes a
+queued OCR document and a separately locked running import task; it proves the
+import cancellation marker, OCR job purge, completed root removal, unchanged
+source directories, continued control of a second root, and the same daemon PID
+and instance ID throughout. Exact-main installed acceptance remains the final
+post-merge check.
+
+The complete `resume-daemon --all-features` run passed all 118 daemon unit tests
+and 34 of 36 runnable native IPC tests, including every deletion and recovery
+case. Two unrelated import-worker IPC cases remained recoverable instead of
+becoming searchable; the same failure was reproduced on unmodified
+`main@e5b5954`. `verify-local.sh` reached the workspace test lane and then hit a
+separate timing-sensitive search-runtime handoff assertion; that exact test
+passed immediately in isolation on both this branch and unmodified main. These
+pre-existing broad-suite failures do not overlap the deletion owner, import
+cancellation, ingest purge or root-removal paths changed here.
+
 ## Issue #399 source-root deletion privacy-revocation contract
 
 Issue #399 is the sole active correctness slice. Exact-main installed evidence
