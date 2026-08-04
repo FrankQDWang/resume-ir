@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#383"
-name = "native_coreml_macos_arm_production_default_closeout"
+issue = "#390"
+name = "macos_arm_product_experiment_entrypoint"
 contract_change_allowed = true
 production_code_allowed = false
 private_benchmark_allowed = false
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. PR #388 merged the winning Core ML FP16 path as the macOS ARM production default. The formal production-composition OCR-enabled 8720-document witness finished in 298.570 seconds, 41.876 percent below the retained 513.675-second ORT baseline and within 0.497 percent of the owner-accepted 297.095-second local witness. Counts, publication, the 3072 MiB H2 limit, lifecycle cleanup and the bounded real-query review passed. This closeout changes only public contract state and makes no two-run mean, cross-device, query-hot-path, Windows or Linux claim."
+scope_exception_reason = "No exception is used. Issue #390 adds one small macOS ARM local experiment entrypoint that composes the existing attested release sidecars and reviewed embedding, Core ML, OCR, classifier and PDFium packs before any import. The implementation reuses existing daemon IPC and the established no-OCR-drain endpoint, adds deterministic public tests, and performs only a private-data-free local preflight during this slice."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,23 +30,28 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+  "AGENTS.md",
+  "scripts/local/coreml-product-path-experiment.py",
+  "scripts/local/tests/test_coreml_product_path_experiment.py",
 ]
-allowed_paths_role = "native_coreml_macos_arm_production_default_closeout_state_paths"
+allowed_paths_role = "macos_arm_product_experiment_entrypoint_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L1_native_coreml_macos_arm_production_default_accepted"
-optimization_layer = "L1"
+observation_stage = "L0_product_experiment_orchestration"
+optimization_layer = "L0"
 optimization_layer_selected = true
-hypothesis = "accepted: the Core ML FP16 worker and fixed B1x512 and B4x512 resources are attested in the macOS ARM production bundle and selected by default without a manual experiment switch"
-expected_delta = "passed: the formal OCR-enabled 8720-document production-composition import finished in 298.570 seconds, 41.876 percent below the 513.675-second #372 ORT baseline and below the 311.950-second acceptance ceiling"
-negative_control = "the retained Issue #372 Dynamic U8S8 whole-head 512 runtime pack on ORT 1.27 with fixed B4x512 bulk Session, interactive 3t plus bulk 2x3t topology, memory patterns enabled for bulk, CPU arena disabled and prepacking disabled"
-implementation_boundary = "PR #388 is merged and main now stages the exact Core ML resource pack and signed Swift worker, passes bundle-relative paths automatically, and selects intfloat-multilingual-e5-small-coreml-fp16-r1 as the macOS ARM production model identity; this closeout permits no further production change"
-resident_pool_workload = "keep the already-shipped interactive plus bulk 2x3 resident composition, fixed bulk B4, bulk memory pattern and request order; production Core ML residents delegate only tensor inference to attested compiled models, pad masked bulk tails without publishing placeholder outputs, and return the same bounded embedding protocol"
-resident_pool_acceptance = "passed: 8720 discovered, 7328 searchable, 265 left in the running OCR backlog, four failed, 49 ignored and zero scan errors; process-tree peak was 2502.094 MiB, graceful shutdown passed and no process lingered"
-full_product_acceptance = "passed for this bounded slice: 20 of 20 semantic and hybrid requests succeeded, 19 returned a full Top 10, no empty snippets or duplicate documents were observed, and manual review found no global retrieval-quality collapse; one semantic-only multi-condition request was empty while its hybrid form returned reasonable candidates, so no query_hot_path or perfect-relevance claim is made"
-raw_profile_boundary = "public evidence is limited to bounded aggregate import milestones, counts, latency, resource, lifecycle and query-review pass or fail metrics plus privacy booleans; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, direct raw hash, database, index, model or cache bytes may enter git or GitHub"
-rollback_condition = "not triggered: formal bundle composition, default selection, import time, counts, publication, lifecycle, H2 resources and bounded query review passed"
+hypothesis = "a single repository-owned build-compose-preflight-run-cleanup entrypoint can eliminate the repeated late runtime, final-name, OCR-pack and model-identity failures without weakening any product or privacy contract"
+expected_delta = "the public self-tests and one real local preflight pass; preflight reads no private resume root, verifies all four runtimes and three import capabilities before any submission, exits with no lingering process, and invalid composition cannot reach import submission"
+negative_control = "manual invocation of cargo, prepare-sidecar, runtime renaming, daemon startup and import monitoring across multiple temporary scripts"
+implementation_boundary = "add one Python orchestration entrypoint and its public tests, plus one AGENTS.md navigation bullet; call the existing macOS ARM release composition and daemon IPC contracts without changing them"
+resident_pool_workload = "preflight starts the product-equivalent daemon with import, OCR, embedding and index workers against an isolated empty data directory, waits for attested readiness, then stops; run mode uses fresh isolated data directories and submits each managed-root import exactly once"
+resident_pool_acceptance = "preflight validates final executable names, exact reviewed resource packs, Core ML production model identity, all optional runtime states and text_import, ocr_import and index_publication capabilities, then proves graceful zero-residue cleanup"
+full_product_acceptance = "this slice does not run a private full import; run-mode behavior is covered by deterministic public tests and future full-import experiments must use this entrypoint"
+raw_profile_boundary = "stdout and committed evidence contain only bounded state and aggregate fields; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, database, index, model or cache bytes may enter git or GitHub"
+rollback_condition = "remove the new entrypoint if it cannot reuse the exact production composition, can submit twice after an unknown acknowledgement, reads a private root during preflight, leaves any child process, or requires weakening runtime, identity, OCR, IPC or privacy gates"
 forbidden_scope = [
   "production_embedding_input_change",
+  "production_model_id_change",
+  "production_runtime_default_change",
   "native_ort_runtime_upgrade",
   "metadata_schema_change",
   "pooling_change",
@@ -67,6 +72,7 @@ forbidden_scope = [
   "gate_weakening",
   "offline_graph_optimization",
   "batch8_batch16_or_batch32",
+  "private_full_import_execution",
 ]
 
 [[performance_history.closed_hypotheses]]
