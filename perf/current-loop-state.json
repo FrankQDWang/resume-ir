@@ -1,28 +1,33 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "accepted",
-  "evidence_lane": "w0_docs",
+  "workflow_state": "slice_active",
+  "experiment_state": "hypothesis_registered",
+  "evidence_lane": "gui_manual",
   "contract_pins": {
-    "active_goal_sha256": "a49d97fa5bd077daf5ed1fa8fa18f8e4c8007ec0f1df756bcc1f06afd7fd5ad4",
+    "active_goal_sha256": "9035b39e26f1a2e4555fe58746680105833b4e807a4592e0a6e7c08bee494d3b",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "9874a2e56b267969909c04e859362c92d04aaf1f"
+    "git_head_sha": "3d24e0c71904b233172f31d3bc5a42ebbfa0d2ae"
   },
-  "current_slice": "#390 macOS ARM product-composition experiment entrypoint",
+  "current_slice": "#396 truthful streaming import progress and dedicated system status",
   "hypothesis": {
-    "id": "issue-390-macos-arm-product-experiment-entrypoint",
-    "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "one repository-owned entrypoint composes the attested macOS ARM product runtime, fails before import on invalid readiness, submits each managed-root import at most once, monitors the no-OCR-drain endpoint and leaves no process residue",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/390",
-    "after_measurement_ref": "PROGRESS.md#issue-390-product-composition-experiment-entrypoint-closeout",
-    "reprofile_ref": "https://github.com/FrankQDWang/resume-ir/pull/394",
+    "id": "issue-396-truthful-streaming-import-ui",
+    "acceptance_cell": "gui_manual",
+    "expected_effect": "the GUI uses existing backend observations to ease progress without prediction, type observed status accessibly, and reserve full keyword readiness for complete scan plus zero OCR backlog plus available keyword capability",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/396",
+    "after_measurement_ref": "pending",
+    "reprofile_ref": "not_applicable_frontend_contract_slice",
     "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/396"
+    },
     {
       "from": "verification_active",
       "to": "evidence_review",
@@ -3380,8 +3385,8 @@
       {"command":"performance, autonomous, loop, governance, exact PR-budget, format, diff and public-repository gates","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"},
       {"command":"Hosted PR Lite","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"}
     ],
-    "all_required_commands_ran": true,
-    "claim": "pass"
+    "all_required_commands_ran": false,
+    "claim": "partial"
   },
   "privacy": {
     "contains_raw_resume_text": false,
@@ -3392,15 +3397,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-390-product-experiment-entrypoint-2026-08-04",
-  "state_version": 622,
-  "previous_state_hash": "5109f870c33e597a367ccc573b26582813da05515ff672440ebab2350e3d83f0",
-  "expected_state_version": 622,
-  "last_confirmed_side_effect": "issue_390_pr_394_merged_and_product_experiment_entrypoint_accepted",
+  "run_id": "issue-396-truthful-streaming-import-ui-2026-08-04",
+  "state_version": 623,
+  "previous_state_hash": "ff9f83a4840a0b4a1b6890664dc362032bb4e917d62c525c549adec2332fa973",
+  "expected_state_version": 623,
+  "last_confirmed_side_effect": "issue_396_created_and_gui_contract_registered",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#390",
+    "primary_issue": "#396",
     "active_prs": [],
     "open_blockers": []
   }
