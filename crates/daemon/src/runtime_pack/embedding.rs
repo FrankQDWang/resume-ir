@@ -13,6 +13,8 @@ use super::security::{
 
 const SCHEMA: &str = "resume-ir.embedding-runtime-pack.v1";
 const PACK_ID: &str = "intfloat-multilingual-e5-small-qint8-r1";
+const COREML_EXPERIMENT_MODEL_ID: &str = "intfloat-multilingual-e5-small-coreml-fp16-r1";
+const COREML_EXPERIMENT_ENV: &str = "RESUME_IR_COREML_PRODUCT_EXPERIMENT";
 const UPSTREAM_ID: &str = "intfloat/multilingual-e5-small";
 const UPSTREAM_REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
 const MAC_MANIFEST_SHA256: &str =
@@ -87,9 +89,11 @@ pub(super) fn validate_with_cancel(
     ensure_not_cancelled(cancelled)?;
     let manifest: Manifest =
         read_manifest_pinned_with_cancel(&root, MAC_MANIFEST_SHA256, cancelled)?;
+    let expected_manifest_model_id = manifest_model_id(model_id, coreml_experiment_enabled())
+        .ok_or(OptionalRuntimeReason::Invalid)?;
     if manifest.schema_version != SCHEMA
         || manifest.runtime_pack_id != PACK_ID
-        || manifest.model_id != model_id
+        || manifest.model_id != expected_manifest_model_id
         || manifest.upstream_model_id != UPSTREAM_ID
         || manifest.upstream_revision != UPSTREAM_REVISION
         || manifest.upstream_model_file != "onnx/model_qint8_avx512_vnni.onnx"
@@ -134,6 +138,18 @@ pub(super) fn validate_with_cancel(
     Ok(())
 }
 
+fn coreml_experiment_enabled() -> bool {
+    std::env::var(COREML_EXPERIMENT_ENV).is_ok_and(|value| value == "1")
+}
+
+fn manifest_model_id(requested_model_id: &str, coreml_experiment: bool) -> Option<&'static str> {
+    match requested_model_id {
+        PACK_ID => Some(PACK_ID),
+        COREML_EXPERIMENT_MODEL_ID if coreml_experiment => Some(PACK_ID),
+        _ => None,
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -152,3 +168,7 @@ struct Manifest {
     upstream_model_file: String,
     quantization: String,
 }
+
+#[cfg(test)]
+#[path = "embedding_tests.rs"]
+mod tests;
