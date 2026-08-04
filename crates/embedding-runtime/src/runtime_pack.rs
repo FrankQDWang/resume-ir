@@ -127,15 +127,10 @@ pub(super) struct RuntimePack {
 }
 
 impl RuntimePack {
-    pub(super) fn load(runtime_dir: &Path) -> Result<Self, RuntimeError> {
-        Self::load_onnx(runtime_dir)
-    }
-
     pub(super) fn load_onnx(runtime_dir: &Path) -> Result<Self, RuntimeError> {
         Self::load_with_expected_assets(runtime_dir, PackKind::Onnx, &MODEL_ASSETS)
     }
 
-    #[expect(dead_code, reason = "activated by the next Issue #404 package slice")]
     pub(super) fn load_coreml(runtime_dir: &Path) -> Result<Self, RuntimeError> {
         Self::load_with_expected_assets(runtime_dir, PackKind::CoreMl, &COREML_TOKENIZER_ASSETS)
     }

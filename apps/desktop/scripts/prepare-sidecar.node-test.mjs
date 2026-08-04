@@ -444,11 +444,39 @@ async function createSyntheticMacosPdfiumStaticPack(repoRoot) {
 async function prepareSyntheticBundleComposition(
   repoRoot,
   appBundle,
-  { daemonPayload = "same-daemon" } = {},
+  { daemonPayload = "same-daemon", edition = "coreml" } = {},
 ) {
   const targetTriple = "aarch64-apple-darwin";
   const pack = await createSyntheticPack(repoRoot);
   const coremlPack = await createSyntheticCoreMlPack(repoRoot);
+  const coreMlTokenizerManifest = {
+    schema_version: "resume-ir.embedding-tokenizer-pack.v1",
+    runtime_pack_id: "intfloat-multilingual-e5-small-coreml-fp16-r1",
+    model_id: "intfloat-multilingual-e5-small-coreml-fp16-r1",
+    upstream_model_id: pack.manifest.upstream_model_id,
+    upstream_revision: pack.manifest.upstream_revision,
+    dimension: 384,
+    provider: "coreml",
+    network_access: "disabled",
+    license_reviewed: true,
+    model_license: "MIT",
+    files: pack.manifest.files.filter(({ role }) =>
+      ["tokenizer", "model_config", "special_tokens_map", "tokenizer_config"].includes(role),
+    ),
+  };
+  const expectedCoreMlTokenizerManifest = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "embedding",
+    targetTriple,
+    "coreml-tokenizer-pack.json",
+  );
+  await writeFile(
+    expectedCoreMlTokenizerManifest,
+    `${JSON.stringify(coreMlTokenizerManifest, null, 2)}\n`,
+  );
   const ocrPack = await createSyntheticOcrPack(repoRoot);
   const classifierPack = await createSyntheticClassifierPack(repoRoot);
   const plan = createDesktopCompositionPlan({
@@ -463,9 +491,12 @@ async function prepareSyntheticBundleComposition(
     expectedOcrManifest: ocrPack.expectedManifest,
     sourceClassifierPackRoot: classifierPack.source,
     expectedClassifierManifest: classifierPack.expectedManifest,
+    embeddingProvider: edition,
   });
-  mkdirSync(path.dirname(plan.coreMlWorker.source), { recursive: true });
-  writeFileSync(plan.coreMlWorker.source, "synthetic Core ML worker source");
+  if (plan.coreMlWorker) {
+    mkdirSync(path.dirname(plan.coreMlWorker.source), { recursive: true });
+    writeFileSync(plan.coreMlWorker.source, "synthetic Core ML worker source");
+  }
   const macosDirectory = path.join(appBundle, "Contents", "MacOS");
   await mkdir(macosDirectory, { recursive: true });
   const desktopBody = syntheticMachO("same-desktop");
@@ -512,15 +543,19 @@ async function prepareSyntheticBundleComposition(
     await writeExecutable(sidecar.destination, body);
     await writeExecutable(path.join(macosDirectory, sidecar.binaryName), body);
   }
-  const coreMlWorkerBody = syntheticMachO("same-coreml-worker");
-  await mkdir(path.dirname(plan.coreMlWorker.destination), { recursive: true });
-  await writeExecutable(plan.coreMlWorker.destination, coreMlWorkerBody);
-  await writeExecutable(
-    path.join(macosDirectory, "resume-coreml-embedding-worker"),
-    coreMlWorkerBody,
-  );
-  await stageEmbeddingResourcePack(plan.resourcePack);
-  await stageCoreMlResourcePack(plan.coreMlResourcePack);
+  if (plan.coreMlWorker) {
+    const coreMlWorkerBody = syntheticMachO("same-coreml-worker");
+    await mkdir(path.dirname(plan.coreMlWorker.destination), { recursive: true });
+    await writeExecutable(plan.coreMlWorker.destination, coreMlWorkerBody);
+    await writeExecutable(
+      path.join(macosDirectory, "resume-coreml-embedding-worker"),
+      coreMlWorkerBody,
+    );
+  }
+  await stageEmbeddingResourcePack(plan.resourcePack, edition);
+  if (plan.coreMlResourcePack) {
+    await stageCoreMlResourcePack(plan.coreMlResourcePack);
+  }
   await stageOcrResourcePack(plan.ocrResourcePack);
   await stageClassifierResourcePack(plan.classifierResourcePack);
   const bundledPack = path.join(
@@ -927,6 +962,53 @@ test("stages only the exact reviewed embedding pack and rejects symlinks", async
     stageEmbeddingResourcePack(badPlan.resourcePack),
     /regular non-symlink file/,
   );
+});
+
+test("stages a Core ML tokenizer pack without ONNX inference assets", async (context) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-coreml-tokenizer-"));
+  context.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+  });
+  const pack = await createSyntheticPack(repoRoot);
+  const fullManifest = JSON.parse(await readFile(pack.expectedManifest, "utf8"));
+  const tokenizerManifest = {
+    schema_version: "resume-ir.embedding-tokenizer-pack.v1",
+    runtime_pack_id: "intfloat-multilingual-e5-small-coreml-fp16-r1",
+    model_id: "intfloat-multilingual-e5-small-coreml-fp16-r1",
+    upstream_model_id: fullManifest.upstream_model_id,
+    upstream_revision: fullManifest.upstream_revision,
+    dimension: 384,
+    provider: "coreml",
+    network_access: "disabled",
+    license_reviewed: true,
+    model_license: "MIT",
+    files: fullManifest.files.filter(({ role }) =>
+      ["tokenizer", "model_config", "special_tokens_map", "tokenizer_config"].includes(role),
+    ),
+  };
+  const expectedCoreMlTokenizerManifest = path.join(repoRoot, "coreml-tokenizer-pack.json");
+  await writeFile(
+    expectedCoreMlTokenizerManifest,
+    JSON.stringify(tokenizerManifest),
+  );
+  const plan = createDesktopCompositionPlan({
+    repoRoot,
+    targetTriple: "aarch64-apple-darwin",
+    debug: false,
+    sourcePackRoot: pack.source,
+    expectedManifest: pack.expectedManifest,
+    expectedCoreMlTokenizerManifest,
+  });
+
+  const receipt = await stageEmbeddingResourcePack(plan.resourcePack, "coreml");
+  assert.equal(receipt.provider, "coreml");
+  assert.deepEqual((await readdir(plan.resourcePack.destination)).sort(), [
+    "config.json",
+    "runtime-pack.json",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+  ]);
 });
 
 test("stages OCR files with the exact manifest executable contract", async (context) => {
@@ -1411,7 +1493,7 @@ test("verifies exact native sidecars and embedding resources in a macOS app", as
   assert.equal(receipt.icon_file_count, 1);
   assert.equal(receipt.embedding_sidecar_count, 1);
   assert.equal(receipt.pdf_renderer_sidecar_count, 1);
-  assert.equal(receipt.embedding_resource_file_count, 7);
+  assert.equal(receipt.embedding_resource_file_count, 5);
   assert.equal(receipt.classifier_resource_file_count, 2);
   assert.equal(receipt.ocr_resource_file_count, 31);
   assert.equal(receipt.pdfium_resource_file_count, 4);
@@ -1420,6 +1502,27 @@ test("verifies exact native sidecars and embedding resources in a macOS app", as
   assert.equal(receipt.architecture, "arm64");
   assert.equal(receipt.path_scan_scope, "repo_root_and_builder_home");
   assert.equal(receipt.build_machine_identity_path_markers, 0);
+});
+
+test("verifies an ONNX-only macOS bundle without Core ML payloads", async (context) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-onnx-bundle-"));
+  context.after(() => rm(repoRoot, { recursive: true, force: true }));
+  const appBundle = path.join(repoRoot, "synthetic.app");
+  const composition = await prepareSyntheticBundleComposition(repoRoot, appBundle, {
+    edition: "onnx",
+  });
+
+  const receipt = await verifyBundledSidecar({
+    repoRoot,
+    targetTriple: composition.targetTriple,
+    appBundle,
+    expectedManifest: composition.expectedManifest,
+    expectedOcrManifest: composition.expectedOcrManifest,
+    expectedClassifierManifest: composition.expectedClassifierManifest,
+  });
+  assert.equal(receipt.coreml_worker_sidecar_count, 0);
+  assert.equal(receipt.coreml_resource_file_count, 0);
+  assert.equal(receipt.embedding_resource_file_count, 7);
 });
 
 test("rejects a desktop executable or icon outside current staged trust", async (context) => {

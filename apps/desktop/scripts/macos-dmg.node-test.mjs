@@ -90,6 +90,7 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
       "<key>CFBundleDisplayName</key><string>resume-ir</string>",
       "<key>CFBundleIconFile</key><string>icon.icns</string>",
       "<key>CFBundleExecutable</key><string>resume-desktop</string>",
+      "<key>LSMinimumSystemVersion</key><string>15.0</string>",
       "</dict></plist>",
     ].join(""),
   );
@@ -135,7 +136,7 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
           pack === "classifier"
             ? "resume-ir.desktop-classifier-model-pack.v1"
             : pack === "embedding"
-              ? "resume-ir.embedding-runtime-pack.v1"
+              ? "resume-ir.embedding-tokenizer-pack.v1"
               : "resume-ir.desktop-ocr-runtime-pack.v1",
         files: [
           {
@@ -1479,6 +1480,7 @@ test("locked macOS platform config selects only the DMG installer", async () => 
   assert.deepEqual(config.bundle.macOS, {
     signingIdentity: "-",
     hardenedRuntime: true,
+    minimumSystemVersion: "15.0",
   });
 });
 

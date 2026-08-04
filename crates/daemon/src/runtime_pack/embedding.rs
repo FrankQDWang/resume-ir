@@ -12,13 +12,15 @@ use super::security::{
 };
 
 const SCHEMA: &str = "resume-ir.embedding-runtime-pack.v1";
+const COREML_SCHEMA: &str = "resume-ir.embedding-tokenizer-pack.v1";
 const PACK_ID: &str = "intfloat-multilingual-e5-small-qint8-r1";
 const COREML_MODEL_ID: &str = "intfloat-multilingual-e5-small-coreml-fp16-r1";
-const COREML_RUNTIME_DIR_ENV: &str = "RESUME_IR_COREML_RUNTIME_DIR";
 const UPSTREAM_ID: &str = "intfloat/multilingual-e5-small";
 const UPSTREAM_REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
 const MAC_MANIFEST_SHA256: &str =
     "a3f400c03a45d4213318ffd9f02a99018ae12d0e233d8bca467e0416382fee39";
+const COREML_TOKENIZER_MANIFEST_SHA256: &str =
+    "c78d7c198fbc6f768ed0d3c7d0ed88f42d69be03cb68f6ff1e07610e64d7c860";
 const MAC_RUNTIME_BYTES: u64 = 29_651_448;
 const MAC_RUNTIME_SHA256: &str = "0d96dce50b9b3bf104857ce1c20352b9a268fab5b60e35cab613c0a8dd161c82";
 
@@ -85,50 +87,39 @@ pub(super) fn validate_with_cancel(
     if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         return Err(OptionalRuntimeReason::Invalid);
     }
+    let kind = PackKind::from_model_id(model_id).ok_or(OptionalRuntimeReason::Invalid)?;
     let root = canonical_input_directory(runtime_dir)?;
     ensure_not_cancelled(cancelled)?;
     let manifest: Manifest =
-        read_manifest_pinned_with_cancel(&root, MAC_MANIFEST_SHA256, cancelled)?;
-    let expected_manifest_model_id = manifest_model_id(model_id, coreml_runtime_configured())
-        .ok_or(OptionalRuntimeReason::Invalid)?;
-    if manifest.schema_version != SCHEMA
-        || manifest.runtime_pack_id != PACK_ID
-        || manifest.model_id != expected_manifest_model_id
+        read_manifest_pinned_with_cancel(&root, kind.manifest_sha256(), cancelled)?;
+    if !kind.manifest_identity_valid(&manifest)
         || manifest.upstream_model_id != UPSTREAM_ID
         || manifest.upstream_revision != UPSTREAM_REVISION
-        || manifest.upstream_model_file != "onnx/model_qint8_avx512_vnni.onnx"
-        || manifest.quantization != "dynamic_int8"
         || manifest.dimension != dimension
-        || manifest.provider != "cpu"
         || manifest.network_access != "disabled"
         || !manifest.license_reviewed
         || !manifest.model_license.eq_ignore_ascii_case("MIT")
-        || !manifest.onnxruntime_license.eq_ignore_ascii_case("MIT")
     {
         return Err(OptionalRuntimeReason::Invalid);
     }
     let files = validate_pack_files_with_cancel(&root, &manifest.files, cancelled)?;
     let roles = files.keys().map(String::as_str).collect::<BTreeSet<_>>();
-    let expected_roles = [
-        "runtime_library",
-        "model",
-        "tokenizer",
-        "model_config",
-        "special_tokens_map",
-        "tokenizer_config",
-    ]
-    .into_iter()
-    .collect::<BTreeSet<_>>();
+    let expected_roles = kind.roles().iter().copied().collect::<BTreeSet<_>>();
     if roles != expected_roles {
         return Err(OptionalRuntimeReason::Invalid);
     }
-    let runtime = files
-        .get("runtime_library")
-        .ok_or(OptionalRuntimeReason::Invalid)?;
-    if runtime.bytes != MAC_RUNTIME_BYTES || runtime.sha256 != MAC_RUNTIME_SHA256 {
-        return Err(OptionalRuntimeReason::Invalid);
+    if kind == PackKind::Onnx {
+        let runtime = files
+            .get("runtime_library")
+            .ok_or(OptionalRuntimeReason::Invalid)?;
+        if runtime.bytes != MAC_RUNTIME_BYTES || runtime.sha256 != MAC_RUNTIME_SHA256 {
+            return Err(OptionalRuntimeReason::Invalid);
+        }
     }
     for (role, bytes, digest) in MODEL_ASSETS {
+        if kind == PackKind::CoreMl && role == "model" {
+            continue;
+        }
         let entry = files.get(role).ok_or(OptionalRuntimeReason::Invalid)?;
         if entry.bytes != bytes || entry.sha256 != digest {
             return Err(OptionalRuntimeReason::Invalid);
@@ -138,14 +129,82 @@ pub(super) fn validate_with_cancel(
     Ok(())
 }
 
-fn coreml_runtime_configured() -> bool {
-    std::env::var_os(COREML_RUNTIME_DIR_ENV).is_some()
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PackKind {
+    Onnx,
+    CoreMl,
 }
 
-fn manifest_model_id(requested_model_id: &str, coreml_configured: bool) -> Option<&'static str> {
-    match requested_model_id {
-        PACK_ID => Some(PACK_ID),
-        COREML_MODEL_ID if coreml_configured => Some(PACK_ID),
+impl PackKind {
+    fn from_model_id(model_id: &str) -> Option<Self> {
+        match model_id {
+            PACK_ID => Some(Self::Onnx),
+            COREML_MODEL_ID => Some(Self::CoreMl),
+            _ => None,
+        }
+    }
+
+    fn manifest_sha256(self) -> &'static str {
+        match self {
+            Self::Onnx => MAC_MANIFEST_SHA256,
+            Self::CoreMl => COREML_TOKENIZER_MANIFEST_SHA256,
+        }
+    }
+
+    fn roles(self) -> &'static [&'static str] {
+        const ONNX: [&str; 6] = [
+            "runtime_library",
+            "model",
+            "tokenizer",
+            "model_config",
+            "special_tokens_map",
+            "tokenizer_config",
+        ];
+        const COREML: [&str; 4] = [
+            "tokenizer",
+            "model_config",
+            "special_tokens_map",
+            "tokenizer_config",
+        ];
+        match self {
+            Self::Onnx => &ONNX,
+            Self::CoreMl => &COREML,
+        }
+    }
+
+    fn manifest_identity_valid(self, manifest: &Manifest) -> bool {
+        match self {
+            Self::Onnx => {
+                manifest.schema_version == SCHEMA
+                    && manifest.runtime_pack_id == PACK_ID
+                    && manifest.model_id == PACK_ID
+                    && manifest.provider == "cpu"
+                    && manifest.upstream_model_file.as_deref()
+                        == Some("onnx/model_qint8_avx512_vnni.onnx")
+                    && manifest.quantization.as_deref() == Some("dynamic_int8")
+                    && manifest
+                        .onnxruntime_license
+                        .as_deref()
+                        .is_some_and(|license| license.eq_ignore_ascii_case("MIT"))
+            }
+            Self::CoreMl => {
+                manifest.schema_version == COREML_SCHEMA
+                    && manifest.runtime_pack_id == COREML_MODEL_ID
+                    && manifest.model_id == COREML_MODEL_ID
+                    && manifest.provider == "coreml"
+                    && manifest.upstream_model_file.is_none()
+                    && manifest.quantization.is_none()
+                    && manifest.onnxruntime_license.is_none()
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn manifest_model_id(requested_model_id: &str) -> Option<&'static str> {
+    match PackKind::from_model_id(requested_model_id) {
+        Some(PackKind::Onnx) => Some(PACK_ID),
+        Some(PackKind::CoreMl) => Some(COREML_MODEL_ID),
         _ => None,
     }
 }
@@ -163,10 +222,10 @@ struct Manifest {
     network_access: String,
     license_reviewed: bool,
     model_license: String,
-    onnxruntime_license: String,
+    onnxruntime_license: Option<String>,
     files: Vec<PackFile>,
-    upstream_model_file: String,
-    quantization: String,
+    upstream_model_file: Option<String>,
+    quantization: Option<String>,
 }
 
 #[cfg(test)]

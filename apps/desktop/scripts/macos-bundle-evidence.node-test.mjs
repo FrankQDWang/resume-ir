@@ -98,6 +98,7 @@ async function bundleFixture(
       "<key>CFBundleDisplayName</key><string>resume-ir</string>",
       "<key>CFBundleIconFile</key><string>icon.icns</string>",
       "<key>CFBundleExecutable</key><string>resume-desktop</string>",
+      "<key>LSMinimumSystemVersion</key><string>15.0</string>",
       "</dict></plist>",
     ].join(""),
   );
@@ -174,7 +175,7 @@ async function bundleFixture(
           pack === "classifier"
             ? "resume-ir.desktop-classifier-model-pack.v1"
             : pack === "embedding"
-              ? "resume-ir.embedding-runtime-pack.v1"
+              ? "resume-ir.embedding-tokenizer-pack.v1"
               : "resume-ir.desktop-ocr-runtime-pack.v1",
         files,
       })}\n`,
@@ -288,6 +289,48 @@ test("writes and verifies one canonical version-bound bundle composition", async
     "utf8",
   );
   assert.equal(manifestBody, `${JSON.stringify(verified)}\n`);
+});
+
+test("binds an ONNX-only macOS 14 composition without Core ML files", async (context) => {
+  const { appBundle } = await bundleFixture(context);
+  await rm(path.join(appBundle, "Contents", "MacOS", "resume-coreml-embedding-worker"));
+  await rm(
+    path.join(appBundle, "Contents", "Resources", "embedding", "runtime-pack", "coreml"),
+    { recursive: true },
+  );
+  const infoPlist = path.join(appBundle, "Contents", "Info.plist");
+  await writeFile(
+    infoPlist,
+    (await readFile(infoPlist, "utf8")).replace(
+      "<key>LSMinimumSystemVersion</key><string>15.0</string>",
+      "<key>LSMinimumSystemVersion</key><string>14.0</string>",
+    ),
+  );
+  const embeddingManifest = path.join(
+    appBundle,
+    "Contents",
+    "Resources",
+    "embedding",
+    "runtime-pack",
+    "runtime-pack.json",
+  );
+  const manifest = JSON.parse(await readFile(embeddingManifest, "utf8"));
+  manifest.schema_version = "resume-ir.embedding-runtime-pack.v1";
+  await writeFile(embeddingManifest, `${JSON.stringify(manifest)}\n`);
+
+  const composition = await createBundleComposition({
+    appBundle,
+    targetTriple: TARGET,
+    source: SOURCE,
+  });
+  assert.equal(
+    composition.executables.some(({ role }) => role === "coreml_worker"),
+    false,
+  );
+  assert.equal(
+    composition.runtime_manifests.some(({ role }) => role === "coreml_embedding"),
+    false,
+  );
 });
 
 test("binds v4 composition verification to the exact signature policy", async (context) => {

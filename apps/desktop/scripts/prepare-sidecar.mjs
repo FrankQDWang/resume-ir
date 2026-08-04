@@ -54,6 +54,12 @@ const EXPECTED_PACK_ROLES = new Set([
   "special_tokens_map",
   "tokenizer_config",
 ]);
+const COREML_TOKENIZER_ROLES = new Set([
+  "tokenizer",
+  "model_config",
+  "special_tokens_map",
+  "tokenizer_config",
+]);
 const COREML_PACK_SCHEMA = "resume-ir.coreml-embedding-runtime-pack.v1";
 const COREML_PACK_ID = "intfloat-multilingual-e5-small-coreml-fp16-r1";
 const COREML_WORKER_BINARY = "resume-coreml-embedding-worker";
@@ -200,6 +206,7 @@ export function createDesktopCompositionPlan({
   buildTargetDir = path.join(repoRoot, "target"),
   targetTriple,
   debug,
+  embeddingProvider = targetTriple === WINDOWS_TARGET_TRIPLE ? "onnx" : "coreml",
   sourcePackRoot = path.join(repoRoot, ".cache", "resume-ir-native-e5-qint8-pack"),
   sourceCoreMlPackRoot = path.join(repoRoot, ".cache", "resume-ir-coreml-runtime-pack"),
   sourceOcrPackRoot = path.join(repoRoot, ".cache", "resume-ir-macos-ocr-runtime-pack"),
@@ -245,6 +252,15 @@ export function createDesktopCompositionPlan({
     "embedding",
     "aarch64-apple-darwin",
     "coreml-runtime-pack.json",
+  ),
+  expectedCoreMlTokenizerManifest = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "embedding",
+    "aarch64-apple-darwin",
+    "coreml-tokenizer-pack.json",
   ),
   expectedOcrManifest = path.join(
     repoRoot,
@@ -319,7 +335,13 @@ export function createDesktopCompositionPlan({
     "runtime-pack.json",
   ),
 }) {
+  if (!new Set(["coreml", "onnx"]).has(embeddingProvider)) {
+    throw new Error("embedding provider is invalid");
+  }
   if (targetTriple === WINDOWS_TARGET_TRIPLE) {
+    if (embeddingProvider !== "onnx") {
+      throw new Error("Windows embedding provider must be ONNX");
+    }
     readWindowsProcessContainmentContract(processContainmentContract);
     readWindowsEmbeddingSourceContract(windowsEmbeddingSourceContract);
     readWindowsOcrSourceContract(windowsOcrSourceContract);
@@ -351,6 +373,7 @@ export function createDesktopCompositionPlan({
       expectedClassifierManifest: windowsClassifierManifest,
       sourcePdfiumPackRoot: sourceWindowsPdfiumPackRoot,
       pdfiumSourceContract: windowsPdfRendererSourceContract,
+      embeddingProvider,
     });
   }
   if (!EMBEDDING_RESOURCE_TARGETS.has(targetTriple)) {
@@ -369,6 +392,7 @@ export function createDesktopCompositionPlan({
       macosPdfiumSourceContract,
       sourceCoreMlPackRoot,
       expectedCoreMlManifest,
+      expectedCoreMlTokenizerManifest,
     ].every(path.isAbsolute)
   ) {
     throw new Error("desktop resource paths must be absolute");
@@ -392,6 +416,8 @@ export function createDesktopCompositionPlan({
     pdfiumSourceContract: macosPdfiumSourceContract,
     sourceCoreMlPackRoot,
     expectedCoreMlManifest,
+    expectedCoreMlTokenizerManifest,
+    embeddingProvider,
   });
 }
 
@@ -411,6 +437,8 @@ function createCompositionPlan({
   pdfiumSourceContract,
   sourceCoreMlPackRoot,
   expectedCoreMlManifest,
+  expectedCoreMlTokenizerManifest,
+  embeddingProvider,
 }) {
   const sidecarOptions = { repoRoot, buildTargetDir, targetTriple, debug };
   return Object.freeze({
@@ -472,9 +500,11 @@ function createCompositionPlan({
         "embedding-runtime-pack",
       ),
       expectedManifest,
+      expectedCoreMlTokenizerManifest,
       sourcePackRoot,
       targetTriple,
     }),
+    embeddingProvider,
     runtimeExecutableAttestation: Object.freeze({
       destination: path.join(
         repoRoot,
@@ -486,7 +516,7 @@ function createCompositionPlan({
       targetTriple,
     }),
     coreMlWorker:
-      targetTriple === "aarch64-apple-darwin"
+      targetTriple === "aarch64-apple-darwin" && embeddingProvider === "coreml"
         ? Object.freeze({
             source: path.join(
               repoRoot,
@@ -505,7 +535,7 @@ function createCompositionPlan({
           })
         : null,
     coreMlResourcePack:
-      targetTriple === "aarch64-apple-darwin"
+      targetTriple === "aarch64-apple-darwin" && embeddingProvider === "coreml"
         ? Object.freeze({
             destination: path.join(
               repoRoot,
@@ -686,6 +716,47 @@ export function validateRuntimePackManifest(manifest) {
   return manifest;
 }
 
+export function validateCoreMlTokenizerPackManifest(manifest) {
+  if (
+    !manifest ||
+    manifest.schema_version !== "resume-ir.embedding-tokenizer-pack.v1" ||
+    manifest.runtime_pack_id !== COREML_PACK_ID ||
+    manifest.model_id !== COREML_PACK_ID ||
+    manifest.upstream_model_id !== "intfloat/multilingual-e5-small" ||
+    manifest.upstream_revision !== "614241f622f53c4eeff9890bdc4f31cfecc418b3" ||
+    manifest.dimension !== 384 ||
+    manifest.provider !== "coreml" ||
+    manifest.network_access !== "disabled" ||
+    manifest.license_reviewed !== true ||
+    manifest.model_license !== "MIT" ||
+    !Array.isArray(manifest.files) ||
+    manifest.files.length !== COREML_TOKENIZER_ROLES.size
+  ) {
+    throw new Error("Core ML tokenizer manifest contract is invalid");
+  }
+  const roles = new Set();
+  const files = new Set();
+  for (const entry of manifest.files) {
+    if (
+      !entry ||
+      !COREML_TOKENIZER_ROLES.has(entry.role) ||
+      roles.has(entry.role) ||
+      typeof entry.file !== "string" ||
+      path.basename(entry.file) !== entry.file ||
+      files.has(entry.file) ||
+      !Number.isSafeInteger(entry.bytes) ||
+      entry.bytes <= 0 ||
+      typeof entry.sha256 !== "string" ||
+      !SHA256_PATTERN.test(entry.sha256)
+    ) {
+      throw new Error("Core ML tokenizer manifest file contract is invalid");
+    }
+    roles.add(entry.role);
+    files.add(entry.file);
+  }
+  return manifest;
+}
+
 export function validateCoreMlRuntimePackManifest(manifest) {
   const expectedRoles = new Set([
     "interactive_analytics",
@@ -757,7 +828,11 @@ async function readDirectRegularFile(file, label) {
   return metadata;
 }
 
-export async function stageEmbeddingResourcePack(plan) {
+export async function stageEmbeddingResourcePack(plan, provider = "onnx") {
+  if (provider !== "onnx" && provider !== "coreml") {
+    throw new Error("embedding resource provider is invalid");
+  }
+  const coreml = provider === "coreml";
   let rootMetadata;
   try {
     rootMetadata = await lstat(plan.sourcePackRoot);
@@ -767,14 +842,20 @@ export async function stageEmbeddingResourcePack(plan) {
   if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
     throw new Error("embedding resource source must be a regular directory");
   }
-  await readDirectRegularFile(plan.expectedManifest, "expected embedding manifest");
+  const expectedManifest = coreml
+    ? plan.expectedCoreMlTokenizerManifest
+    : plan.expectedManifest;
+  await readDirectRegularFile(expectedManifest, "expected embedding manifest");
   const sourceManifestPath = path.join(plan.sourcePackRoot, "runtime-pack.json");
   await readDirectRegularFile(sourceManifestPath, "source embedding manifest");
   let expected;
   let source;
   try {
-    expected = validateRuntimePackManifest(
-      JSON.parse(await readFile(plan.expectedManifest, "utf8")),
+    const validateManifest = coreml
+      ? validateCoreMlTokenizerPackManifest
+      : validateRuntimePackManifest;
+    expected = validateManifest(
+      JSON.parse(await readFile(expectedManifest, "utf8")),
     );
     source = validateRuntimePackManifest(
       JSON.parse(await readFile(sourceManifestPath, "utf8")),
@@ -785,7 +866,14 @@ export async function stageEmbeddingResourcePack(plan) {
     }
     throw error;
   }
-  if (JSON.stringify(source) !== JSON.stringify(expected)) {
+  const sourceFiles = new Map(source.files.map((entry) => [entry.role, entry]));
+  const sourceMatches = coreml
+    ? expected.files.every(
+        (entry) =>
+          JSON.stringify(sourceFiles.get(entry.role)) === JSON.stringify(entry),
+      )
+    : JSON.stringify(source) === JSON.stringify(expected);
+  if (!sourceMatches) {
     throw new Error("embedding runtime source does not match reviewed manifest");
   }
 
@@ -795,7 +883,10 @@ export async function stageEmbeddingResourcePack(plan) {
       sourceFile,
       `embedding resource ${entry.role}`,
     );
-    if (metadata.size !== entry.bytes || (await sha256(sourceFile)) !== entry.sha256) {
+    if (
+      metadata.size !== entry.bytes ||
+      (await sha256(sourceFile)) !== entry.sha256
+    ) {
       throw new Error(`embedding resource ${entry.role} does not match manifest`);
     }
   }
@@ -813,14 +904,16 @@ export async function stageEmbeddingResourcePack(plan) {
   await rm(temporary, { recursive: true, force: true });
   await mkdir(temporary, { mode: 0o700 });
   try {
-    await copyFile(plan.expectedManifest, path.join(temporary, "runtime-pack.json"));
+    await copyFile(expectedManifest, path.join(temporary, "runtime-pack.json"));
     await chmod(path.join(temporary, "runtime-pack.json"), 0o644);
     for (const entry of expected.files) {
       const destination = path.join(temporary, entry.file);
       await copyFile(path.join(plan.sourcePackRoot, entry.file), destination);
       await chmod(destination, entry.role === "runtime_library" ? 0o755 : 0o644);
     }
-    const copiedManifest = validateRuntimePackManifest(
+    const copiedManifest = (coreml
+      ? validateCoreMlTokenizerPackManifest
+      : validateRuntimePackManifest)(
       JSON.parse(await readFile(path.join(temporary, "runtime-pack.json"), "utf8")),
     );
     if (JSON.stringify(copiedManifest) !== JSON.stringify(expected)) {
@@ -832,7 +925,10 @@ export async function stageEmbeddingResourcePack(plan) {
         copiedFile,
         `staged embedding resource ${entry.role}`,
       );
-      if (metadata.size !== entry.bytes || (await sha256(copiedFile)) !== entry.sha256) {
+      if (
+        metadata.size !== entry.bytes ||
+        (await sha256(copiedFile)) !== entry.sha256
+      ) {
         throw new Error(`staged embedding resource ${entry.role} does not match manifest`);
       }
     }
@@ -857,6 +953,7 @@ export async function stageEmbeddingResourcePack(plan) {
   return Object.freeze({
     schema_version: "resume-ir.embedding-resource-stage.v1",
     target_triple: plan.targetTriple,
+    provider,
     resource_file_count: expected.files.length + 1,
   });
 }
@@ -1059,6 +1156,14 @@ function parseArguments(args) {
   return { debug, targetTriple };
 }
 
+function embeddingProviderFromEnvironment(value, targetTriple) {
+  const provider = value ?? (targetTriple === WINDOWS_TARGET_TRIPLE ? "onnx" : "coreml");
+  if (!new Set(["coreml", "onnx"]).has(provider)) {
+    throw new Error("embedding provider is invalid");
+  }
+  return provider;
+}
+
 function debugFromEnvironment(value) {
   if (value === undefined || value === "false") return false;
   if (value === "true") return true;
@@ -1103,14 +1208,19 @@ async function main() {
   const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
   const targetTriple = options.targetTriple ?? process.env.TAURI_ENV_TARGET_TRIPLE;
   const debug = options.debug ?? debugFromEnvironment(process.env.TAURI_ENV_DEBUG);
+  const embeddingProvider = embeddingProviderFromEnvironment(
+    process.env.RESUME_IR_MACOS_EMBEDDING_PROVIDER,
+    targetTriple,
+  );
   const plan = createDesktopCompositionPlan({
     repoRoot,
     buildTargetDir: defaultSidecarBuildTargetDir(),
     targetTriple,
     debug,
+    embeddingProvider,
   });
   await buildAttestedSidecars(plan);
-  await stageEmbeddingResourcePack(plan.resourcePack);
+  await stageEmbeddingResourcePack(plan.resourcePack, plan.embeddingProvider);
   if (plan.coreMlResourcePack) {
     await stageCoreMlResourcePack(plan.coreMlResourcePack);
   }

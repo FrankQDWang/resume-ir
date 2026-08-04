@@ -87,7 +87,7 @@ fn run() -> Result<(), RuntimeError> {
 
 fn run_one_shot() -> Result<(), RuntimeError> {
     let environment = RuntimeEnvironment::read()?;
-    let pack = RuntimePack::load(&environment.runtime_dir)?;
+    let pack = RuntimePack::load_onnx(&environment.runtime_dir)?;
     if environment.model_id != pack.model_id() || environment.dimension != pack.dimension() {
         return Err(RuntimeError::IdentityMismatch);
     }
@@ -119,7 +119,7 @@ fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
         fixed_shape,
     } = mode;
     let environment = ResidentEnvironment::read(thread_policy)?;
-    let pack = RuntimePack::load(&environment.runtime_dir)?;
+    let pack = RuntimePack::load_onnx(&environment.runtime_dir)?;
     let model_id = pack.model_id().to_string();
     let dimension = pack.dimension();
     let model_path = pack.file(FileRole::Model)?.to_path_buf();
@@ -141,8 +141,8 @@ fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
 fn run_coreml_resident(role: coreml_product_experiment::CoreMlRole) -> Result<(), RuntimeError> {
     start_resident_parent_death_guard()?;
     let environment = ResidentEnvironment::read(ResidentThreadPolicy::PoolExperiment)?;
-    let pack = RuntimePack::load(&environment.runtime_dir)?;
-    if environment.dimension != DIMENSION {
+    let pack = RuntimePack::load_coreml(&environment.runtime_dir)?;
+    if environment.model_id != pack.model_id() || environment.dimension != pack.dimension() {
         return Err(RuntimeError::IdentityMismatch);
     }
     let mut model = coreml_product_experiment::CoreMlEmbeddingModel::load(&pack, role)?;
