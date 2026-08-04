@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#409"
-name = "deduplicate_coreml_b1_b4_weights_with_multifunction_model"
+issue = "#412"
+name = "normalize_macos_icon_and_smooth_import_stage_motion"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
@@ -22,21 +22,14 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #409 is delivered as a contract transition, a bounded local multifunction asset screen, and only after that screen passes a review-sized production-pack migration within the normal PR budget."
+scope_exception_reason = "No exception is used. Issue #412 is a bounded macOS icon and frontend motion slice. It changes no backend state, wire contract, import behavior or performance threshold."
 allowed_paths = [
-  "scripts/local/coreml-b4x512-convert.py",
-  "scripts/local/coreml-b4x512-runner.swift",
-  "scripts/local/coreml-product-path-experiment.py",
-  "scripts/local/tests/test_coreml_product_path_experiment.py",
-  "apps/desktop/scripts/coreml-resident-worker.swift",
-  "crates/embedding-runtime/src/coreml_product_experiment.rs",
-  "crates/embedding-runtime/src/coreml_product_experiment_tests.rs",
-  "apps/desktop/scripts/prepare-sidecar.mjs",
-  "apps/desktop/scripts/prepare-sidecar.node-test.mjs",
-  "apps/desktop/resources/embedding/aarch64-apple-darwin/coreml-runtime-pack.json",
-  "apps/desktop/scripts/verify-bundled-sidecar.mjs",
-  "apps/desktop/scripts/macos-bundle-evidence.node-test.mjs",
-  "apps/desktop/scripts/macos-dmg.node-test.mjs",
+  "apps/desktop/src/import-progress.tsx",
+  "apps/desktop/src/import-progress.test.tsx",
+  "apps/desktop/src/styles.css",
+  "apps/desktop/scripts/macos-icon.node-test.mjs",
+  "apps/desktop/src-tauri/icons/icon.png",
+  "apps/desktop/src-tauri/icons/icon.icns",
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
   "perf/current-loop-state.json",
@@ -44,25 +37,24 @@ allowed_paths = [
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
 ]
-allowed_paths_role = "coreml_multifunction_conversion_runtime_pack_worker_product_runner_packaging_tests_and_state_paths"
-primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L1_coreml_model_asset_representation"
-optimization_layer = "L1"
+allowed_paths_role = "macos_icon_optical_size_import_stage_motion_and_state_paths"
+primary_benchmark_lane = "first_searchable"
+observation_stage = "L0_gui_visual_motion"
+optimization_layer = "L0"
 optimization_layer_selected = true
-hypothesis = "merging the existing fixed B1x512 and B4x512 Core ML functions into one macOS 15 multifunction MLProgram deduplicates shared E5 weights while preserving each fixed function graph, vector semantics, resident topology and warm inference performance"
-expected_delta = "the macOS 15 Core ML-only DMG is at most 320000000 bytes; public-synthetic B1 and B4 warm latency regress no more than 5 percent; the winning full-product no-OCR-drain endpoint is at most 313.499 seconds with the retained counts, resource and query sanity guards"
-negative_control = "the current two-model runtime pack remains the control; a multifunction asset without one physical shared-weight store, with an unknown function, wrong fixed shape, digest drift, vector drift, more than 5 percent B1 or B4 regression, oversized DMG or changed ONNX edition must fail closed"
-implementation_boundary = "macOS 15 Core ML asset conversion/merge, function-bound worker loading, exact runtime-pack validation, immutable resource staging, Core ML-only DMG composition and the existing product experiment runner; the macOS 14 ONNX edition is read-only and unchanged"
-resident_pool_workload = "the current public-synthetic fixed B1x512 and B4x512 tensor workloads with the existing interactive plus dual-bulk resident roles; only the winning candidate may read the configured private resume root"
-resident_pool_acceptance = "both fixed functions load from one multifunction asset, produce finite unit vectors with current Core ML parity, preserve cancellation/restart/cleanup, and keep warmed B1 and B4 latency within 5 percent of the two-model control"
-full_product_acceptance = "build and inspect one immutable macOS 15 Core ML-only DMG at or below 320000000 bytes, then run one OCR-enabled 8720-document product import to the established no-OCR-drain endpoint at or below 313.499 seconds, retain 7328 searchable/vector-indexed documents, stay within 3072 MiB, pass at least ten authorized semantic and hybrid query intents, and reach zero process residue"
+hypothesis = "a smaller centered optical footprint and transform-driven continuous stage transition remove the two visible macOS polish defects without changing the existing truthful import projection"
+expected_delta = "the current icon artwork aligns optically with neighboring Dock icons, and observed import-stage sentences enter with continuous motion without discrete character stepping or low-frame-rate clipping"
+negative_control = "redrawn icon artwork, missing deterministic transparent margin, discrete steps animation, partial sentence exposure, fabricated stage text, repeated screen-reader characters or motion under reduced-motion must fail closed"
+implementation_boundary = "existing icon asset scaling plus ICNS regeneration and frontend-only presentation; no Rust, daemon API, IPC, persistence, import scheduler, indexing, model, query semantics, polling or progress-truth changes"
+resident_pool_workload = "not applicable; the GUI consumes the existing serialized lifecycle and managed-root polling snapshots"
+resident_pool_acceptance = "not applicable; focused frontend, icon asset, accessibility and macOS bundle checks own this slice"
+full_product_acceptance = "exact-commit macOS bundle inspection and representative visual acceptance must show the unchanged artwork at a normalized Dock footprint and smooth import-stage motion with reduced-motion fallback"
 raw_profile_boundary = "no private path, filename, resume text, raw query, candidate result, token, PID, log, trace, database, index, model or cache bytes may enter tests, screenshots, git or GitHub"
-rollback_condition = "delete the multifunction candidate and retain the current two-model production pack if weight deduplication is not proven, the DMG exceeds 320000000 bytes, vector/function validation fails, B1 or B4 warm latency regresses over 5 percent, the full endpoint exceeds 313.499 seconds, counts/query/lifecycle regress, or H2 peak exceeds 3072 MiB"
+rollback_condition = "revert if the icon artwork changes beyond uniform scale and centering, the Dock footprint remains oversized, the stage motion is discontinuous or distracting, accessibility regresses, or any backend/progress semantics change"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
-  "upstream_model_weight_or_revision_change",
-  "coreml_compute_precision_change",
+  "production_runtime_default_change",
   "native_ort_runtime_upgrade",
   "metadata_schema_change",
   "pooling_change",
@@ -74,17 +66,15 @@ forbidden_scope = [
   "resident_topology_or_thread_change",
   "query_semantics_change",
   "ipc_or_diagnostics_contract_change",
-  "persistence_schema_change",
-  "macos14_onnx_edition_change",
-  "onnx_model_or_runtime_change",
+  "persistence_or_index_contract_change",
   "windows_or_linux",
   "raw_private_output",
   "raw_query_or_result_publication",
   "gate_weakening",
   "offline_graph_optimization",
   "batch8_batch16_or_batch32",
-  "public_release_publication",
-  "tauri_command_change",
+  "private_full_import_execution",
+  "rust_or_tauri_command_change",
   "daemon_status_or_source_root_schema_change",
   "backend_poll_frequency_change",
   "synthetic_backend_stage_invention",
