@@ -2,7 +2,7 @@ import { FolderOpen, FolderTree, Pause, Play, RefreshCw, Trash2, X } from "lucid
 import { useState } from "react"
 
 import type { CapabilityState, SourceRoot } from "./daemon"
-import { ImportProgress } from "./import-progress"
+import { ImportProgress, importProgressPresentation } from "./import-progress"
 
 interface SourceRootsPanelProps {
   roots: SourceRoot[]
@@ -15,8 +15,6 @@ interface SourceRootsPanelProps {
   onResume(root: SourceRoot): void
   onDelete(root: SourceRoot): void
 }
-
-const ACTIVE_PHASES = new Set(["queued", "discovering", "fingerprinting", "classifying", "parsing", "ocr", "publishing"])
 
 export function SourceRootsPanel({
   roots,
@@ -93,30 +91,12 @@ function SourceRootCard({
 }) {
   const scan = root.last_scan
   const deleting = root.state === "deleting"
-  const active = scan !== null && ACTIVE_PHASES.has(scan.phase)
-  const status = deleting
-    ? "正在删除本地数据"
-    : root.state === "offline"
-    ? "目录离线"
-    : root.watcher_state === "paused"
-      ? "监控已暂停"
-      : root.watcher_state === "unavailable"
-        ? "监控不可用"
-      : active
-        ? "扫描进行中"
-        : scan === null
-          ? "等待首次扫描"
-        : scan?.phase === "failed"
-          ? "上次扫描失败"
-          : scan?.phase === "partial"
-            ? "上次扫描不完整"
-            : "持续监控中"
-  const scanLabel = active ? "扫描中" : scan ? "重新扫描" : "开始扫描"
+  const presentation = importProgressPresentation(root, keywordCapabilityState)
   return <article className="source-root-card">
     <div className="source-root-heading">
       <FolderTree size={22} />
-      <div className="source-copy"><strong>{root.display_label}</strong><p>{status} · {scan === null ? "首次扫描后启用自动监听与 5 分钟兜底" : "自动监听与每 5 分钟兜底扫描"}</p></div>
-      <span className={`source-state source-state-${deleting ? "deleting" : root.watcher_state === "unavailable" ? "offline" : root.watcher_state === "paused" ? "paused" : root.state}`}>{status}</span>
+      <div className="source-copy"><strong>{root.display_label}</strong><p>{presentation.stageMessage} · {scan === null ? "首次扫描后启用自动监听与 5 分钟兜底" : "自动监听与每 5 分钟兜底扫描"}</p></div>
+      <span className={`source-state source-state-${deleting ? "deleting" : root.watcher_state === "unavailable" ? "offline" : root.watcher_state === "paused" ? "paused" : root.state}`}>{presentation.stageMessage}</span>
     </div>
     <ImportProgress root={root} keywordCapabilityState={keywordCapabilityState} />
     <dl className="source-counts">
@@ -126,11 +106,11 @@ function SourceRootCard({
       <Count label="待确认" value={root.current_counts.needs_review} />
       <Count label="OCR" value={root.current_counts.ocr} />
       <Count label="失败" value={root.current_counts.failed} />
-      <Count label="忽略" value={scan?.counts.ignored} />
+      <Count label="跳过的文件/目录" value={scan?.counts.ignored} />
     </dl>
     <div className="source-actions">
-      <button type="button" className="plain-button" onClick={onScan} disabled={busy || active || deleting || !importAllowed || root.state !== "active"}>
-        <RefreshCw size={14} />{scanLabel}
+      <button type="button" className="plain-button" onClick={onScan} disabled={busy || presentation.active || deleting || !importAllowed || root.state !== "active"}>
+        <RefreshCw size={14} />{presentation.scanActionLabel}
       </button>
       {!deleting && root.state !== "offline" && root.watcher_state === "active"
         ? <button type="button" className="plain-button" onClick={onPause} disabled={busy}><Pause size={14} />暂停监控</button>

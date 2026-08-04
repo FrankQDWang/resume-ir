@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest"
 
 import type { SourceRoot } from "./daemon"
-import { importProgressPresentation } from "./import-progress"
+import {
+  hasActiveManagedRootScan,
+  importProgressPresentation,
+} from "./import-progress"
 
 function root(overrides: Partial<SourceRoot> = {}): SourceRoot {
   return {
@@ -48,7 +51,8 @@ describe("truthful import progress presentation", () => {
   it("treats a nonzero searchable count during import as partial only", () => {
     const presentation = importProgressPresentation(root(), "available")
     expect(presentation.observedPercent).toBe(80)
-    expect(presentation.stageMessage).toBe("正在解析和处理")
+    expect(presentation.stageMessage).toBe("解析中")
+    expect(presentation.scanActionLabel).toBe("扫描中")
     expect(presentation.progressValueLabel).toBe("80% · 约 1 秒")
     expect(presentation).not.toHaveProperty("keywordMessage")
     expect(presentation).not.toHaveProperty("keywordState")
@@ -57,17 +61,26 @@ describe("truthful import progress presentation", () => {
   it("reports only the exact phase supplied by the backend", () => {
     const expected = {
       queued: "等待扫描",
-      discovering: "正在发现文件",
-      fingerprinting: "正在核对文件变更",
-      classifying: "正在识别简历与其他文件",
-      parsing: "正在解析和处理",
-      ocr: "正在处理 OCR 文件",
-      publishing: "正在发布关键词和语义索引",
+      discovering: "发现文件",
+      fingerprinting: "核对变更",
+      classifying: "分类中",
+      parsing: "解析中",
+      ocr: "OCR 处理中",
+      publishing: "发布索引",
     } as const
     for (const [phase, message] of Object.entries(expected)) {
       const candidate = root({ last_scan: { ...root().last_scan!, phase: phase as keyof typeof expected } })
-      expect(importProgressPresentation(candidate, "available").stageMessage).toBe(message)
+      const presentation = importProgressPresentation(candidate, "available")
+      expect(presentation.stageMessage).toBe(message)
     }
+  })
+
+  it("owns active-phase classification for every managed-root consumer", () => {
+    expect(hasActiveManagedRootScan([root()])).toBe(true)
+    expect(hasActiveManagedRootScan([root({
+      last_scan: { ...root().last_scan!, phase: "complete" },
+    })])).toBe(false)
+    expect(hasActiveManagedRootScan([])).toBe(false)
   })
 
   it("does not claim complete readiness while OCR continues after a complete scan", () => {

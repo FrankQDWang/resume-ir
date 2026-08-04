@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from "react"
 
-import type { CapabilityState, SourceRoot } from "./daemon"
+import type { CapabilityState, SourceRoot, SourceRootScan } from "./daemon"
 
-const ACTIVE_PHASES = new Set([
-  "queued",
-  "discovering",
-  "fingerprinting",
-  "classifying",
-  "parsing",
-  "ocr",
-  "publishing",
-])
+const ACTIVE_STAGE_LABELS: Partial<Record<SourceRootScan["phase"], string>> = {
+  queued: "等待扫描",
+  discovering: "发现文件",
+  fingerprinting: "核对变更",
+  classifying: "分类中",
+  parsing: "解析中",
+  ocr: "OCR 处理中",
+  publishing: "发布索引",
+}
 
 export interface ImportProgressPresentation {
   active: boolean
@@ -18,7 +18,12 @@ export interface ImportProgressPresentation {
   exactCountLabel: string
   progressValueLabel: string
   stageMessage: string
+  scanActionLabel: string
   terminal: boolean
+}
+
+export function hasActiveManagedRootScan(roots: SourceRoot[]): boolean {
+  return roots.some((root) => root.last_scan !== null && ACTIVE_STAGE_LABELS[root.last_scan.phase] !== undefined)
 }
 
 export function importProgressPresentation(
@@ -26,7 +31,7 @@ export function importProgressPresentation(
   keywordCapabilityState: CapabilityState,
 ): ImportProgressPresentation {
   const scan = root.last_scan
-  const active = scan !== null && ACTIVE_PHASES.has(scan.phase)
+  const active = scan !== null && ACTIVE_STAGE_LABELS[scan.phase] !== undefined
   const observedTotal = scan?.counts.total ?? scan?.counts.discovered ?? 0
   const processed = scan?.counts.processed ?? 0
   const observedPercent = scan === null
@@ -47,6 +52,7 @@ export function importProgressPresentation(
     && root.current_counts.ocr === 0
     && keywordCapabilityState === "available"
 
+  const message = stageMessage(root, fullyKeywordReady)
   return {
     active,
     observedPercent,
@@ -58,7 +64,8 @@ export function importProgressPresentation(
       : scan === null
         ? "未开始"
         : `${observedPercent}%`,
-    stageMessage: stageMessage(root, fullyKeywordReady),
+    stageMessage: message,
+    scanActionLabel: active ? "扫描中" : scan ? "重新扫描" : "开始扫描",
     terminal,
   }
 }
@@ -142,15 +149,7 @@ function stageMessage(root: SourceRoot, fullyKeywordReady: boolean): string {
   }
   if (scan.phase === "partial") return "本轮扫描不完整"
   if (scan.phase === "failed") return "本轮扫描失败"
-  return ({
-    queued: "等待扫描",
-    discovering: "正在发现文件",
-    fingerprinting: "正在核对文件变更",
-    classifying: "正在识别简历与其他文件",
-    parsing: "正在解析和处理",
-    ocr: "正在处理 OCR 文件",
-    publishing: "正在发布关键词和语义索引",
-  } as Record<string, string>)[scan.phase] ?? "扫描进行中"
+  return ACTIVE_STAGE_LABELS[scan.phase] ?? "扫描进行中"
 }
 
 function etaLabel(seconds: number | null) {

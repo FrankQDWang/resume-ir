@@ -139,4 +139,24 @@ describe("desktop runtime axes", () => {
     await vi.waitFor(() => expect(scheduled.at(-1)?.delayMs).toBe(5000))
     stop()
   })
+
+  it("lets the single serial lifecycle scheduler adopt the managed-root active cadence", async () => {
+    const scheduled: Array<{ callback: () => void; delayMs: number }> = []
+    const stop = startSerialLifecyclePolling({
+      readSnapshot: async () => lifecycle("running"),
+      onSnapshot: vi.fn(),
+      pollDelayMs: () => 1000,
+      onError: vi.fn(),
+      clock: {
+        setTimeout: (callback, delayMs) => { scheduled.push({ callback, delayMs }); return scheduled.length },
+        clearTimeout: vi.fn(),
+      },
+      focusEvents: {
+        addFocusListener: vi.fn(),
+        removeFocusListener: vi.fn(),
+      },
+    })
+    await vi.waitFor(() => expect(scheduled.at(-1)?.delayMs).toBe(1000))
+    stop()
+  })
 })

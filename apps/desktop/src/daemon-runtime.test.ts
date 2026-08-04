@@ -3,11 +3,10 @@ import { describe, expect, it } from "vitest"
 import {
   daemonRetryControl,
   deletionReceiptUncertainPresentation,
-  hasActiveManagedRootScan,
-  managedRootsReadFailureAfterRefresh,
+  initialManagedRootsReadState,
+  managedRootsReadStateAfterRefresh,
   rootsAfterDeletionAccepted,
   sourcePanelBanner,
-  startSerialManagedRootsPolling,
 } from "./daemon-runtime"
 import type { SourceRoot } from "./daemon"
 import {
@@ -61,11 +60,21 @@ describe("daemon retry control", () => {
 })
 
 describe("managed source-root read recovery", () => {
-  it("clears ordinary and overload read failures after a valid refresh", () => {
-    expect(managedRootsReadFailureAfterRefresh("error")).toBe("error")
-    expect(managedRootsReadFailureAfterRefresh("success")).toBeNull()
-    expect(managedRootsReadFailureAfterRefresh("overload")).toBe("overload")
-    expect(managedRootsReadFailureAfterRefresh("success")).toBeNull()
+  it("retains one authoritative snapshot across one transient read failure", () => {
+    const initial = initialManagedRootsReadState()
+    const firstFailure = managedRootsReadStateAfterRefresh(initial, "error", true)
+    expect(firstFailure).toEqual({ consecutiveFailures: 1, visibleFailure: null })
+    expect(managedRootsReadStateAfterRefresh(firstFailure, "success", true))
+      .toEqual(initial)
+  })
+
+  it("shows initial and repeated managed-root read failures", () => {
+    const initial = initialManagedRootsReadState()
+    expect(managedRootsReadStateAfterRefresh(initial, "overload", false))
+      .toEqual({ consecutiveFailures: 1, visibleFailure: "overload" })
+    const firstFailure = managedRootsReadStateAfterRefresh(initial, "error", true)
+    expect(managedRootsReadStateAfterRefresh(firstFailure, "error", true))
+      .toEqual({ consecutiveFailures: 2, visibleFailure: "error" })
   })
 
   it("keeps source-list failures separate from other import operation messages", () => {
@@ -105,70 +114,6 @@ describe("managed source-root read recovery", () => {
       state: "submitting",
       message: "目录删除接收状态未确认，正在重新读取授权目录",
     })
-  })
-})
-
-describe("active managed-root refresh", () => {
-  const activeRoot = (phase: NonNullable<SourceRoot["last_scan"]>["phase"]): SourceRoot => ({
-    root_id: "root-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    display_label: "Synthetic A",
-    state: "active",
-    watcher_state: "active",
-    current_counts: { discovered: 10, searchable: 4, non_resume: 0, needs_review: 0, ocr: 0, failed: 0 },
-    last_scan: {
-      scan_id: "scan-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      trigger: "manual",
-      phase,
-      completeness: phase === "complete" ? "complete" : "unknown",
-      counts: { discovered: 10, searchable: 4, non_resume: 0, needs_review: 0, ocr: 0, failed: 0, ignored: 0, processed: 4, total: 10, errors: 0 },
-      rate_per_second: 2,
-      eta_seconds: 3,
-      started_at_seconds: 1,
-      updated_at_seconds: 2,
-      completed_at_seconds: phase === "complete" ? 2 : null,
-    },
-  })
-
-  it("requests fast refresh only for an active scan", () => {
-    expect(hasActiveManagedRootScan([activeRoot("parsing")])).toBe(true)
-    expect(hasActiveManagedRootScan([activeRoot("complete")])).toBe(false)
-    expect(hasActiveManagedRootScan([])).toBe(false)
-  })
-
-  it("serializes one-second refreshes without overlap", async () => {
-    const timers = new Map<number, { callback: () => void; delayMs: number }>()
-    let nextTimer = 1
-    let refreshes = 0
-    let release!: () => void
-    const firstRefresh = new Promise<void>((resolve) => { release = resolve })
-    const stop = startSerialManagedRootsPolling({
-      refresh: async () => {
-        refreshes += 1
-        if (refreshes === 1) await firstRefresh
-      },
-      clock: {
-        setTimeout: (callback, delayMs) => {
-          const timer = nextTimer++
-          timers.set(timer, { callback, delayMs })
-          return timer
-        },
-        clearTimeout: (timer) => { timers.delete(timer) },
-      },
-    })
-
-    expect([...timers.values()].map(({ delayMs }) => delayMs)).toEqual([1000])
-    const firstTimer = [...timers.entries()][0]
-    timers.delete(firstTimer[0])
-    firstTimer[1].callback()
-    expect(refreshes).toBe(1)
-    expect(timers.size).toBe(0)
-
-    release()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect([...timers.values()].map(({ delayMs }) => delayMs)).toEqual([1000])
-    stop()
-    expect(timers.size).toBe(0)
   })
 })
 

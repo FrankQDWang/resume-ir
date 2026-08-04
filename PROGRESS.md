@@ -1,5 +1,52 @@
 # Progress
 
+## Issue #417 single managed-root progress owner contract
+
+Issue #417 is the only active slice. Installed-App diagnosis found three copies
+of the seven active scan phases, two simultaneously mounted managed-root refresh
+schedulers, and two per-root presentation ladders. The earlier detailed phase
+label helper was removed in #398; subsequent work recreated stage interpretation
+inside a new component instead of keeping one reusable owner. This slice
+consolidates phase activity, concise stage copy, card status, accessibility text
+and refresh cadence behind one frontend presentation owner and the existing
+serialized lifecycle poller. Other components may consume that result but may
+not re-declare the phase set or derive their own status ladder.
+
+One failed managed-root read may retain the last authoritative snapshot without
+showing a false error banner; a repeated failure must still fail visibly. The
+crawler-level `ignored` counter is renamed to “跳过的文件/目录”, because it covers
+temporary, hidden, unsupported and other excluded entries rather than ignored
+resumes. This slice does not invent a keyword-ready milestone. Independent
+full-corpus keyword readiness is tracked by #418 because the current atomic
+keyword/vector publication boundary requires a backend contract change. No
+daemon, API, IPC, persistence, indexing, model or query semantics change is
+authorized here.
+
+## Issue #417 implementation and local verification
+
+The frontend now has one `ACTIVE_STAGE_LABELS` table. It is the sole owner of
+both active-phase classification and the visible stage sentence; the root card,
+progress row, assistive announcement, scan control and polling cadence consume
+the resulting presentation instead of defining their own phase sets or status
+ladders. The separate one-second managed-root scheduler was deleted. The
+existing serialized lifecycle poller now reads roots at one second only while
+the panel is visible and that same presentation reports an active scan, and at
+five seconds otherwise.
+
+The last authoritative root snapshot now survives one transient read failure;
+an initial or second consecutive failure still produces the existing visible
+error. The crawler exclusion counter is labelled “跳过的文件/目录”. The independent
+full-corpus keyword-ready publication remains #418 and was not approximated in
+the frontend.
+
+All 49 desktop Vitest checks, the TypeScript/Vite production build, public
+repository guard, performance/autonomous/loop/governance contracts, PR budget
+and diff check passed. `verify-local.sh` completed the workspace suites but
+stopped at the unchanged native daemon watcher with `configuration_invalid`.
+The exact same test and fatal classification reproduced from an untouched
+`main@2828560` worktree using the same reviewed local runtime packs. This is
+recorded as existing environment evidence, not as a pass for that native test.
+
 ## Issue #415 continuous import progress and deletion regression contract
 
 Issue #415 is the only active slice. Installed-App observation showed that the
