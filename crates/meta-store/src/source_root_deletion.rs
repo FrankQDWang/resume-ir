@@ -8,6 +8,9 @@ use crate::{
     SourceRootId, UnixTimestamp,
 };
 
+#[path = "source_root_deletion_checkpoint.rs"]
+mod checkpoint;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SourceRootDeletionPhase {
     Requested,
@@ -306,32 +309,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         if !root_exists {
             return Err(MetaStoreError::not_found("source_root"));
         }
-        let documents = {
-            let mut statement = transaction
-                .prepare(
-                    "SELECT DISTINCT occurrence.document_id
-                     FROM source_occurrence AS occurrence
-                     WHERE occurrence.root_id = ?1
-                       AND NOT EXISTS (
-                         SELECT 1 FROM source_occurrence AS other
-                         WHERE other.document_id = occurrence.document_id
-                           AND other.root_id <> occurrence.root_id
-                           AND other.state = 'present'
-                       )
-                     ORDER BY occurrence.document_id",
-                )
-                .map_err(MetaStoreError::storage)?;
-            let documents = statement
-                .query_map(params![root_id.as_str()], |row| row.get::<_, String>(0))
-                .map_err(MetaStoreError::storage)?
-                .map(|row| {
-                    let id = row.map_err(MetaStoreError::storage)?;
-                    DocumentId::from_str(&id)
-                        .map_err(|_| MetaStoreError::invalid_value("document.id"))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            documents
-        };
+        let snapshot = checkpoint::CurrentSourceRootDeletionSnapshot::read(&transaction, root_id)?;
         transaction
             .execute(
                 "INSERT INTO source_root_deletion (
@@ -352,8 +330,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                     completed_at_seconds = NULL",
                 params![
                     root_id.as_str(),
-                    i64::try_from(documents.len())
-                        .map_err(|_| MetaStoreError::storage_invariant())?,
+                    snapshot.affected_documents()?,
                     now.as_unix_seconds()
                 ],
             )
@@ -373,29 +350,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                 params![root_id.as_str()],
             )
             .map_err(MetaStoreError::storage)?;
-        transaction
-            .execute(
-                "DELETE FROM source_root_deletion_document WHERE root_id = ?1",
-                params![root_id.as_str()],
-            )
-            .map_err(MetaStoreError::storage)?;
-        for document_id in &documents {
-            transaction
-                .execute(
-                    "INSERT INTO source_root_deletion_document (
-                        root_id, document_id, content_hash
-                     )
-                     SELECT ?1, revision.document_id, revision.content_hash
-                     FROM source_revision AS revision
-                     WHERE revision.document_id = ?2
-                     UNION
-                     SELECT ?1, document.id, document.content_hash
-                     FROM document
-                     WHERE document.id = ?2",
-                    params![root_id.as_str(), document_id.as_str()],
-                )
-                .map_err(MetaStoreError::storage)?;
-        }
+        snapshot.replace(&transaction, root_id)?;
         transaction.commit().map_err(MetaStoreError::storage)?;
         drop(connection);
         self.source_root_deletion(root_id)?
@@ -502,6 +457,19 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             .phase;
         if !deletion_phase_transition_allowed(current, phase) {
             return Err(MetaStoreError::invalid_transition());
+        }
+        if matches!(
+            (current, phase),
+            (
+                SourceRootDeletionPhase::Requested,
+                SourceRootDeletionPhase::Quiescing
+            )
+        ) {
+            return checkpoint::advance_requested_to_quiescing(
+                &mut self.connection.borrow_mut(),
+                root_id,
+                now,
+            );
         }
         let completed =
             (phase == SourceRootDeletionPhase::Complete).then_some(now.as_unix_seconds());
