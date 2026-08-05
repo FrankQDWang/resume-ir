@@ -22,9 +22,10 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #436 is a bounded eight-path slice with separate activation and implementation PRs; production changes are limited to making the existing meta-store phase setter atomically refresh the Requested deletion snapshot before Quiescing."
+scope_exception_reason = "No exception is used. Issue #436 has exactly nine allowed paths because the repository module-size contract requires the Requested checkpoint transaction to live in one new private meta-store module; behavior, public API and cross-crate scope remain unchanged."
 allowed_paths = [
   "crates/meta-store/src/source_root_deletion.rs",
+  "crates/meta-store/src/source_root_deletion_checkpoint.rs",
   "crates/meta-store/src/source_root_deletion_tests.rs",
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -41,12 +42,12 @@ optimization_layer_selected = true
 hypothesis = "forcing the existing generic phase setter to refresh a Requested receipt snapshot from current SQLite ownership in the same Immediate transaction that advances to Quiescing will prevent historical snapshot drift from deleting a newly shared document or omitting a newly exclusive document without changing later phases"
 expected_delta = "a synthetic Requested receipt whose original document becomes shared and whose root gains a new exclusive document advances through the existing setter with the shared document excluded, the new exclusive document included, and receipt identity, started time and attempt evidence preserved"
 negative_control = "a new public transition API, daemon production diff, a second transition owner, snapshot or phase partial commit, Quiescing-plus reconciliation, post-checkpoint TOCTOU claims, root epoch, schema, diagnostics, IPC, index, queue, thread, polling, fallback or compatibility behavior must fail closed"
-implementation_boundary = "meta-store only: keep set_source_root_deletion_phase as the sole public transition API; for Requested to Quiescing only, reuse begin's private exclusive-document query and snapshot writer in one Immediate transaction; leave every other transition unchanged and prove the generic entry cannot bypass refresh"
+implementation_boundary = "meta-store only: keep set_source_root_deletion_phase as the sole public transition API; delegate only the private Requested-to-Quiescing transaction to source_root_deletion_checkpoint.rs, reuse that module's exclusive-document snapshot owner from begin, leave every other transition unchanged, and prove the generic entry cannot bypass refresh"
 resident_pool_workload = "not applicable; deterministic in-memory metadata-store tests own this correctness slice"
 resident_pool_acceptance = "not applicable; focused and full meta-store tests plus warnings-denied Clippy own this slice"
 full_product_acceptance = "the existing generic setter atomically refreshes current exclusive ownership and advances Requested to Quiescing, while existing integration and daemon restart-recovery behavior remains unchanged"
 raw_profile_boundary = "no private path, filename, resume text, raw query, candidate result, token, PID, log, trace, database, index, model or cache bytes may enter tests, screenshots, git or GitHub"
-rollback_condition = "revert if the generic setter cannot remain the only Requested-to-Quiescing owner, if snapshot and phase cannot commit atomically, if current ownership cannot be distinguished safely, if another transition changes, or if implementation requires a ninth path, daemon production diff, schema, phase, error, index or new public API"
+rollback_condition = "revert if the generic setter cannot remain the only Requested-to-Quiescing owner, if snapshot and phase cannot commit atomically, if the private extraction does not return the main module below its large-file boundary, if current ownership cannot be distinguished safely, if another transition changes, or if implementation requires a tenth path, daemon production diff, schema, phase, error, index or new public API"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
