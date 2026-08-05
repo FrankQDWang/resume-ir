@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#421"
-name = "scope_exception_contract_owner_v1"
+issue = "#424"
+name = "generic_successor_scope_exception_contract_v1"
 contract_change_allowed = true
 production_code_allowed = false
 private_benchmark_allowed = false
@@ -22,31 +22,29 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #421 is a bounded governance repair that removes issue-number truth binding from autonomous scope-exception validation while preserving the existing PR budget, protected merge, no-auto-merge, allowed-path and gate-integrity policies."
+scope_exception_reason = "No exception is used. Issue #424 is a bounded governance repair that makes generic successor validation accept only explicit boolean scope-exception declarations while preserving the two historical true-only contracts and the existing PR-budget owner."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
-  "PROGRESS.md",
   "perf/current-loop-state.json",
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "scripts/ci/check-autonomous-goal.py",
-  "scripts/ci/test-governance-contract-mutations.py",
+  "scripts/ci/check-gate-integrity.py",
 ]
-allowed_paths_role = "single_scope_exception_contract_owner_governance_slice"
+allowed_paths_role = "single_generic_successor_scope_exception_gate_owner"
 primary_benchmark_lane = "full_import_ocr_backlog"
 observation_stage = "L0_governance_contract"
 optimization_layer = "L0"
 optimization_layer_selected = true
-hypothesis = "the generic PR-budget checker already owns real-diff scope-exception behavior, so removing issue-number truth binding from the autonomous checker eliminates the conflicting owner without weakening any fixed safety policy"
-expected_delta = "scope-exception validity is independent of issue number while missing reasons, non-boolean values, auto-merge permission and over-budget diffs without an exception continue to fail closed"
-negative_control = "an issue whitelist, budget change, allowed-path expansion, auto-merge enablement, branch-protection change, gate weakening or modification outside the two checker/test paths must fail closed"
-implementation_boundary = "governance-only validation ownership correction in the autonomous checker and its focused mutation tests; no product runtime, schema, IPC, benchmark, merge or branch-protection behavior change"
+hypothesis = "generic successor validation can require an explicit boolean without deriving its truth from issue identity, while dedicated historical contracts retain their existing true-only requirement and PR-budget validation remains authoritative for real diff behavior"
+expected_delta = "ordinary successor transitions accept explicit true or false, reject missing, string and integer values, and preserve both historical attribution contracts as true-only"
+negative_control = "truthiness, fallback defaults, issue-number whitelists, budget changes, allowed-path expansion, auto-merge enablement, branch-protection changes, transition-path weakening or modification outside the gate owner must fail closed"
+implementation_boundary = "governance-only successor scope-exception validation and in-file self-tests in check-gate-integrity.py; no product runtime, schema, IPC, benchmark, merge, budget or branch-protection behavior change"
 resident_pool_workload = "not applicable; no runtime workload is executed"
-resident_pool_acceptance = "not applicable; focused governance mutation and contract checks own this slice"
-full_product_acceptance = "the two-file governance diff passes focused mutation, autonomous, PR-budget, gate-integrity, public-boundary and diff checks"
+resident_pool_acceptance = "not applicable; in-file gate-integrity self-tests and focused governance contracts own this slice"
+full_product_acceptance = "the one-file governance diff passes in-file mutation/self-tests, full gate-integrity, autonomous, PR-budget, performance, loop-state, public-boundary and diff checks"
 raw_profile_boundary = "no private path, filename, resume text, raw query, candidate result, token, PID, log, trace, database, index, model or cache bytes may enter tests, screenshots, git or GitHub"
-rollback_condition = "revert if scope-exception behavior depends on issue identity, if the PR-budget checker stops owning real-diff enforcement, or if any fixed safety policy becomes weaker"
+rollback_condition = "revert if ordinary successors accept non-boolean values, historical true-only contracts accept false, issue identity controls ordinary truth, or any existing delivery safety policy becomes weaker"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
