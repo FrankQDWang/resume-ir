@@ -1,4 +1,189 @@
-use crate::{EphemeralMetaStore, UnixTimestamp};
+use rusqlite::params;
+
+use super::{
+    read_source_root_deletion_completion_residuals, SourceRootDeletionCompletionResiduals,
+};
+use crate::{
+    ContentDigest, Document, DocumentId, DocumentStatus, EphemeralMetaStore, FileExtension,
+    MetaStoreErrorClass, ScanTrigger, SourceRevision, SourceRootDeletionPhase, UnixTimestamp,
+};
+
+#[test]
+fn completion_residual_owner_reads_one_typed_row_and_preserves_failed_completion() {
+    const ROOT: &str = "/synthetic/completion-residual-owner";
+    const SCAN_ID: &str = "completion-residual-owner-scan";
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_800_300_000);
+    let root = store
+        .register_source_root(ROOT, ROOT, "Completion residual owner", now)
+        .unwrap();
+    let source = b"synthetic completion residual source";
+    let mut document = Document {
+        id: DocumentId::from_non_secret_parts(&["completion-residual-owner"]),
+        source_uri: "synthetic://completion-residual-owner/document.pdf".to_string(),
+        normalized_path: "synthetic/completion-residual-owner/document.pdf".to_string(),
+        file_name: "document.pdf".to_string(),
+        extension: FileExtension::Pdf,
+        byte_size: source.len() as u64,
+        mtime: now,
+        content_hash: None,
+        text_hash: None,
+        is_deleted: false,
+        created_at: now,
+        updated_at: now,
+        status: DocumentStatus::FieldsExtracted,
+    };
+    let revision = SourceRevision::for_content(
+        document.id.clone(),
+        ContentDigest::from_bytes(source),
+        source.len() as u64,
+    );
+    document.content_hash = Some(revision.content_hash.as_str().to_string());
+    store.upsert_document(&document).unwrap();
+    store.insert_source_revision(&revision).unwrap();
+    store
+        .begin_scan(&root.id, SCAN_ID, ScanTrigger::Manual, now)
+        .unwrap();
+    store
+        .observe_source_occurrence(
+            &root.id,
+            "document.pdf",
+            &document.id,
+            &revision.id,
+            SCAN_ID,
+            now,
+        )
+        .unwrap();
+    {
+        let connection = store.connection.borrow();
+        connection
+            .execute(
+                "INSERT INTO pdf_reprocess_job (
+                    source_revision_id, root_id, relative_path, parser_contract,
+                    state, attempts, scheduled_task_id, queued_at_seconds,
+                    updated_at_seconds, completed_at_seconds
+                 ) VALUES (?1, ?2, 'document.pdf', 'synthetic_parser_v1',
+                           'queued', 0, NULL, ?3, ?3, NULL)",
+                params![
+                    revision.id.as_str(),
+                    root.id.as_str(),
+                    now.as_unix_seconds()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO import_task (
+                    id, root_path, status, queued_at_seconds,
+                    started_at_seconds, finished_at_seconds, updated_at_seconds
+                 ) VALUES ('completion-residual-task', ?1, 'queued', ?2, NULL, NULL, ?2)",
+                params![ROOT, now.as_unix_seconds()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO authorized_import_root (
+                    canonical_root_path, requested_root_path, root_kind,
+                    root_preset, scan_profile, scan_budget_kind,
+                    scan_budget_limit, paused, updated_at_seconds
+                 ) VALUES (?1, ?1, 'explicit', NULL, 'explicit', NULL, NULL, 0, ?2)",
+                params![ROOT, now.as_unix_seconds()],
+            )
+            .unwrap();
+    }
+    store.begin_source_root_deletion(&root.id, now).unwrap();
+    for phase in [
+        SourceRootDeletionPhase::Quiescing,
+        SourceRootDeletionPhase::Publishing,
+        SourceRootDeletionPhase::Purging,
+        SourceRootDeletionPhase::Verifying,
+    ] {
+        store
+            .set_source_root_deletion_phase(&root.id, phase, now)
+            .unwrap();
+    }
+
+    let expected = SourceRootDeletionCompletionResiduals {
+        source_occurrences: 1,
+        scan_snapshots: 1,
+        pdf_reprocess_jobs: 1,
+        import_tasks: 1,
+        authorized_import_roots: 1,
+        documents: 1,
+        total: 6,
+    };
+    assert_eq!(
+        read_source_root_deletion_completion_residuals(&store.connection.borrow(), &root.id)
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        store
+            .complete_source_root_deletion(&root.id, now)
+            .unwrap_err()
+            .class(),
+        MetaStoreErrorClass::StorageInvariant
+    );
+    assert!(store.source_root(&root.id).unwrap().is_some());
+    assert_eq!(
+        store.source_root_deletion(&root.id).unwrap().unwrap().phase,
+        SourceRootDeletionPhase::Verifying
+    );
+    assert_eq!(
+        read_source_root_deletion_completion_residuals(&store.connection.borrow(), &root.id)
+            .unwrap(),
+        expected
+    );
+
+    {
+        let connection = store.connection.borrow();
+        connection
+            .execute(
+                "DELETE FROM pdf_reprocess_job WHERE root_id = ?1",
+                params![root.id.as_str()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM source_occurrence WHERE root_id = ?1",
+                params![root.id.as_str()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM scan_snapshot WHERE root_id = ?1",
+                params![root.id.as_str()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM import_task WHERE root_path = ?1",
+                params![ROOT],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM authorized_import_root WHERE canonical_root_path = ?1",
+                params![ROOT],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM document WHERE id = ?1",
+                params![document.id.as_str()],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        read_source_root_deletion_completion_residuals(&store.connection.borrow(), &root.id)
+            .unwrap(),
+        SourceRootDeletionCompletionResiduals::default()
+    );
+    let completed = store.complete_source_root_deletion(&root.id, now).unwrap();
+    assert_eq!(completed.phase, SourceRootDeletionPhase::Complete);
+    assert!(store.source_root(&root.id).unwrap().is_none());
+}
 
 #[test]
 fn deletion_attempt_evidence_rejects_unproduced_error_codes() {

@@ -12,7 +12,7 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "f2fce9fd27ab1d4bfb06c1dfe7113cdb6a18ae54"
+    "git_head_sha": "cc863991c6d012ddb232b8ab1b9c7d8abf0ee655"
   },
   "privacy": {
     "contains_raw_resume_text": false,
@@ -23,7 +23,7 @@
     "contains_diagnostics_package": false,
     "trace_summary_redacted": true
   },
-  "report_sha256": "81b7d679802a93a829f0cac0fa8b1044f0ff5d4503b0eb40b9b05d0f2d3b44a4",
+  "report_sha256": "409e6b610ca164d6371567e72ed71ce33b646efc1b48f723399408f76692c734",
   "report_size_bytes": 4072,
   "artifacts": [
     {

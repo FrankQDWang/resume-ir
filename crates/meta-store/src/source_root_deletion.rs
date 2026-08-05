@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use core_domain::DocumentId;
-use rusqlite::{params, OptionalExtension, Row, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 
 use crate::{
     MetaStoreError, MetadataStore, MetadataStoreAccess, MetadataStoreWriteAccess, Result,
@@ -124,6 +124,81 @@ const SOURCE_ROOT_DELETION_COLUMNS: &str =
      evidence.attempt_count, evidence.last_attempt_at_seconds, \
      evidence.last_error_phase, evidence.last_error_code, \
      evidence.last_error_at_seconds";
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct SourceRootDeletionCompletionResiduals {
+    source_occurrences: u64,
+    scan_snapshots: u64,
+    pdf_reprocess_jobs: u64,
+    import_tasks: u64,
+    authorized_import_roots: u64,
+    documents: u64,
+    total: u64,
+}
+
+impl SourceRootDeletionCompletionResiduals {
+    fn is_empty(self) -> bool {
+        self.total == 0
+    }
+}
+
+const SOURCE_ROOT_DELETION_COMPLETION_RESIDUALS_SQL: &str = r#"WITH residuals AS (
+    SELECT
+        (SELECT COUNT(*) FROM source_occurrence WHERE root_id = ?1) AS source_occurrences,
+        (SELECT COUNT(*) FROM scan_snapshot WHERE root_id = ?1) AS scan_snapshots,
+        (SELECT COUNT(*) FROM pdf_reprocess_job WHERE root_id = ?1) AS pdf_reprocess_jobs,
+        (
+            SELECT COUNT(*) FROM import_task
+            WHERE root_path = (SELECT canonical_path FROM source_root_deletion WHERE root_id = ?1)
+        ) AS import_tasks,
+        (
+            SELECT COUNT(*) FROM authorized_import_root
+            WHERE canonical_root_path = (
+                SELECT canonical_path FROM source_root_deletion WHERE root_id = ?1)
+        ) AS authorized_import_roots,
+        (
+            SELECT COUNT(*) FROM document
+            WHERE id IN (
+                SELECT document_id FROM source_root_deletion_document WHERE root_id = ?1)
+        ) AS documents
+)
+SELECT source_occurrences, scan_snapshots, pdf_reprocess_jobs,
+       import_tasks, authorized_import_roots, documents,
+    source_occurrences + scan_snapshots + pdf_reprocess_jobs
+        + import_tasks + authorized_import_roots + documents AS total
+FROM residuals"#;
+
+fn read_source_root_deletion_completion_residuals(
+    connection: &Connection,
+    root_id: &SourceRootId,
+) -> Result<SourceRootDeletionCompletionResiduals> {
+    let persisted = connection
+        .query_row(
+            SOURCE_ROOT_DELETION_COMPLETION_RESIDUALS_SQL,
+            params![root_id.as_str()],
+            |row| {
+                Ok([
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                ])
+            },
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(SourceRootDeletionCompletionResiduals {
+        source_occurrences: to_u64(persisted[0])?,
+        scan_snapshots: to_u64(persisted[1])?,
+        pdf_reprocess_jobs: to_u64(persisted[2])?,
+        import_tasks: to_u64(persisted[3])?,
+        authorized_import_roots: to_u64(persisted[4])?,
+        documents: to_u64(persisted[5])?,
+        total: to_u64(persisted[6])?,
+    })
+}
 
 const MAX_RECENT_DELETION_ATTEMPTS: usize = 16;
 
@@ -558,44 +633,6 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         u64::try_from(documents.len()).map_err(|_| MetaStoreError::storage_invariant())
     }
 
-    pub fn source_root_deletion_residual_count(&self, root_id: &SourceRootId) -> Result<u64> {
-        let residuals = self
-            .connection
-            .borrow()
-            .query_row(
-                "SELECT
-                    (SELECT COUNT(*) FROM source_occurrence WHERE root_id = ?1)
-                    + (SELECT COUNT(*) FROM scan_snapshot WHERE root_id = ?1)
-                    + (SELECT COUNT(*) FROM pdf_reprocess_job WHERE root_id = ?1)
-                    + (
-                        SELECT COUNT(*) FROM import_task
-                        WHERE root_path = (
-                            SELECT canonical_path FROM source_root_deletion
-                            WHERE root_id = ?1
-                        )
-                    )
-                    + (
-                        SELECT COUNT(*) FROM authorized_import_root
-                        WHERE canonical_root_path = (
-                            SELECT canonical_path FROM source_root_deletion
-                            WHERE root_id = ?1
-                        )
-                    )
-                    + (
-                        SELECT COUNT(*) FROM document
-                        WHERE id IN (
-                            SELECT document_id
-                            FROM source_root_deletion_document
-                            WHERE root_id = ?1
-                        )
-                    )",
-                params![root_id.as_str()],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(MetaStoreError::storage)?;
-        to_u64(residuals)
-    }
-
     pub fn complete_source_root_deletion(
         &self,
         root_id: &SourceRootId,
@@ -608,39 +645,8 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
-        let residuals = transaction
-            .query_row(
-                "SELECT
-                    (SELECT COUNT(*) FROM source_occurrence WHERE root_id = ?1)
-                    + (SELECT COUNT(*) FROM scan_snapshot WHERE root_id = ?1)
-                    + (SELECT COUNT(*) FROM pdf_reprocess_job WHERE root_id = ?1)
-                    + (
-                        SELECT COUNT(*) FROM import_task
-                        WHERE root_path = (
-                            SELECT canonical_path FROM source_root_deletion
-                            WHERE root_id = ?1
-                        )
-                    )
-                    + (
-                        SELECT COUNT(*) FROM authorized_import_root
-                        WHERE canonical_root_path = (
-                            SELECT canonical_path FROM source_root_deletion
-                            WHERE root_id = ?1
-                        )
-                    )
-                    + (
-                        SELECT COUNT(*) FROM document
-                        WHERE id IN (
-                            SELECT document_id
-                            FROM source_root_deletion_document
-                            WHERE root_id = ?1
-                        )
-                    )",
-                params![root_id.as_str()],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(MetaStoreError::storage)?;
-        if residuals != 0 {
+        let residuals = read_source_root_deletion_completion_residuals(&transaction, root_id)?;
+        if !residuals.is_empty() {
             return Err(MetaStoreError::storage_invariant());
         }
         let removed = transaction

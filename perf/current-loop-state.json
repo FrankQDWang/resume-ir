@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_active",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "correctness_passed",
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "6adcdbb3d93455adbe0dc9af8b9071af58ebee1c92396f0a0dfe3ea182fd395b",
@@ -10,7 +10,7 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "f2fce9fd27ab1d4bfb06c1dfe7113cdb6a18ae54"
+    "git_head_sha": "cc863991c6d012ddb232b8ab1b9c7d8abf0ee655"
   },
   "current_slice": "#433 private source-root deletion completion residual owner",
   "hypothesis": {
@@ -18,11 +18,31 @@
     "acceptance_cell": "w0_docs",
     "expected_effect": "one private typed SQL row reader removes duplicated completion-residual predicates while preserving the existing transaction and deletion behavior",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/433",
-    "after_measurement_ref": "pending",
+    "after_measurement_ref": "PROGRESS.md#issue-433-private-source-root-deletion-completion-residual-owner",
     "reprofile_ref": "not_applicable_correctness_slice",
-    "decision": "pending"
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-433-private-source-root-deletion-completion-residual-owner"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-433-private-source-root-deletion-completion-residual-owner"
+    },
+    {
+      "from": "red_check_written",
+      "to": "implementation_active",
+      "evidence_ref": "PROGRESS.md#issue-433-private-source-root-deletion-completion-residual-owner"
+    },
+    {
+      "from": "slice_active",
+      "to": "red_check_written",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/433"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3641,7 +3661,10 @@
       {"command":"Issue #417 desktop Vitest and production frontend build","exit_code":0,"evidence_ref":"PROGRESS.md#issue-417-implementation-and-local-verification"},
       {"command":"Issue #417 performance, autonomous, loop, governance, PR-budget, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-417-implementation-and-local-verification"},
       {"command":"./scripts/ci/verify-local.sh stopped on unchanged daemon watcher configuration_invalid","exit_code":101,"evidence_ref":"PROGRESS.md#issue-417-implementation-and-local-verification"},
-      {"command":"untouched main@2828560 exact daemon watcher reproduced configuration_invalid","exit_code":101,"evidence_ref":"PROGRESS.md#issue-417-implementation-and-local-verification"}
+      {"command":"untouched main@2828560 exact daemon watcher reproduced configuration_invalid","exit_code":101,"evidence_ref":"PROGRESS.md#issue-417-implementation-and-local-verification"},
+      {"command":"Issue #433 focused and full meta-store tests","exit_code":0,"evidence_ref":"PROGRESS.md#issue-433-private-source-root-deletion-completion-residual-owner"},
+      {"command":"cargo clippy -p meta-store --all-targets --locked -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#issue-433-private-source-root-deletion-completion-residual-owner"},
+      {"command":"cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#issue-433-private-source-root-deletion-completion-residual-owner"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3656,10 +3679,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-433-source-root-deletion-completion-residual-owner-2026-08-05",
-  "state_version": 656,
-  "previous_state_hash": "7274dcaea5e31a83466414203ae780d783552a0398cd0cecfc75204e50a25def",
-  "expected_state_version": 656,
-  "last_confirmed_side_effect": "issue_433_activation_contract_selected",
+  "state_version": 660,
+  "previous_state_hash": "dfe0be02cb92c55941275eb6b742b4c86ce2326ae83b20b2da7076d97444dd7a",
+  "expected_state_version": 660,
+  "last_confirmed_side_effect": "issue_433_local_verification_completed",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
