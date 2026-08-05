@@ -1,16 +1,16 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_active",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "correctness_passed",
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "b53f2f2dda8d579b4e1f3e243261f25f22612170b179f034348cc19a4f7cd211",
-    "acceptance_matrix_sha256": "3bb057fbe6d376f54eeb51f048ba1aeccabfe9536cb780e5bd3d58caebccada6",
+    "acceptance_matrix_sha256": "dc00a615d21f4f932931c50923e45a61024a80c462ac3b7b1aed919f1af3570b",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "ccddcab61bf2bc9c9e32e41468258f1edba5a45b"
+    "git_head_sha": "0748b2ee0135981d713c0a8fcf0073e4e49f48be"
   },
   "current_slice": "#440 durable source-root deletion checkpoint protocol marker",
   "hypothesis": {
@@ -18,11 +18,31 @@
     "acceptance_cell": "w0_docs",
     "expected_effect": "schema v37 durably marks legacy or unattested deletion receipts as 1 and explicitly marks new receipt snapshots satisfying checkpoint invariant v2 as 2 without changing runtime reconciliation behavior",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/440",
-    "after_measurement_ref": "pending",
+    "after_measurement_ref": "PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol",
     "reprofile_ref": "not_applicable_correctness_slice",
-    "decision": "pending"
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"
+    },
+    {
+      "from": "red_check_written",
+      "to": "implementation_active",
+      "evidence_ref": "PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"
+    },
+    {
+      "from": "slice_active",
+      "to": "red_check_written",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/440"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3698,7 +3718,11 @@
       {"command":"Issue #436 generic Requested-to-Quiescing checkpoint red and green test","exit_code":0,"evidence_ref":"PROGRESS.md#issue-436-requested-deletion-checkpoint-reconciliation"},
       {"command":"cargo test -p meta-store --locked","exit_code":0,"evidence_ref":"PROGRESS.md#issue-436-requested-deletion-checkpoint-reconciliation"},
       {"command":"cargo test -p resume-daemon --test s20_ipc startup_recovers_source_root_deletion_with_the_same_receipt --locked -- --exact","exit_code":0,"evidence_ref":"PROGRESS.md#issue-436-requested-deletion-checkpoint-reconciliation"},
-      {"command":"cargo clippy -p meta-store -p resume-daemon --all-targets --locked -- -D warnings and cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#issue-436-requested-deletion-checkpoint-reconciliation"}
+      {"command":"cargo clippy -p meta-store -p resume-daemon --all-targets --locked -- -D warnings and cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#issue-436-requested-deletion-checkpoint-reconciliation"},
+      {"command":"schema v37 legacy and current checkpoint marker red and green witness","exit_code":0,"evidence_ref":"PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"},
+      {"command":"18 current-store tests including exact v36 forward and initialization receipt recovery","exit_code":0,"evidence_ref":"PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"},
+      {"command":"cargo test -p meta-store --locked","exit_code":0,"evidence_ref":"PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"},
+      {"command":"cargo test -p resume-daemon --test s20_ipc startup_recovers_source_root_deletion_with_the_same_receipt --locked -- --exact","exit_code":0,"evidence_ref":"PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3713,10 +3737,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-440-source-root-deletion-checkpoint-protocol-2026-08-05",
-  "state_version": 667,
-  "previous_state_hash": "e4fc6e30a37c0aa1433841779c203eadfbe74a33b23a1c0a839f4fb520b9c369",
-  "expected_state_version": 667,
-  "last_confirmed_side_effect": "issue_440_activation_contract_selected",
+  "state_version": 671,
+  "previous_state_hash": "e9c15f4995cfbcec1e2388bfe997803b204dca36dc557b335664577b41c8ccdd",
+  "expected_state_version": 671,
+  "last_confirmed_side_effect": "issue_440_local_verification_completed",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

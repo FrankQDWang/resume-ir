@@ -4,8 +4,8 @@ use core_domain::DocumentId;
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 
 use crate::{
-    MetaStoreError, MetadataStore, MetadataStoreAccess, MetadataStoreWriteAccess, Result,
-    SourceRootId, UnixTimestamp,
+    schema_v37, MetaStoreError, MetadataStore, MetadataStoreAccess, MetadataStoreWriteAccess,
+    Result, SourceRootId, UnixTimestamp,
 };
 
 #[path = "source_root_deletion_checkpoint.rs"]
@@ -315,9 +315,10 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                 "INSERT INTO source_root_deletion (
                     root_id, canonical_path, phase,
                     affected_documents, removed_documents,
-                    started_at_seconds, updated_at_seconds
+                    started_at_seconds, updated_at_seconds,
+                    checkpoint_protocol_version
                  )
-                 SELECT id, canonical_path, 'requested', ?2, 0, ?3, ?3
+                 SELECT id, canonical_path, 'requested', ?2, 0, ?3, ?3, ?4
                  FROM source_root
                  WHERE id = ?1
                  ON CONFLICT(root_id) DO UPDATE SET
@@ -327,11 +328,13 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                     removed_documents = 0,
                     started_at_seconds = excluded.started_at_seconds,
                     updated_at_seconds = excluded.updated_at_seconds,
-                    completed_at_seconds = NULL",
+                    completed_at_seconds = NULL,
+                    checkpoint_protocol_version = excluded.checkpoint_protocol_version",
                 params![
                     root_id.as_str(),
                     snapshot.affected_documents()?,
-                    now.as_unix_seconds()
+                    now.as_unix_seconds(),
+                    schema_v37::SNAPSHOT_INVARIANT_V2,
                 ],
             )
             .map_err(MetaStoreError::storage)?;

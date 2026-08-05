@@ -1,5 +1,42 @@
 # Progress
 
+## Issue #440 durable source-root deletion checkpoint protocol
+
+Issue #440 advances metadata to schema v37 and adds one
+`checkpoint_protocol_version` integer to the authoritative deletion receipt.
+The closed values have one meaning: `1` is legacy or unattested, while `2`
+attests that the persisted snapshot satisfied checkpoint invariant v2 when the
+attestation was written. It is not immutable creation provenance and does not
+fence ownership changes after that checkpoint.
+
+The v36-to-v37 migration defaults existing receipts fail-closed to `1`. The
+sole new-receipt writer explicitly writes `2` in its existing `Immediate`
+transaction; omission can never imply current. The marker is private, is not
+exposed through `SourceRootDeletion`, daemon diagnostics or IPC, and is not
+read to change retry, phase, cleanup or recovery behavior. Attempt evidence
+remains observation-only. No reconciler, root epoch, index, queue, thread or
+polling path was added.
+
+The focused synthetic witness builds an exact v36 Quiescing receipt with one
+snapshot row and nonzero attempt evidence. Migration preserves the complete
+receipt, snapshot and evidence objects while adding marker `1`; a new v37
+receipt has marker `2` across current-store reopen. Two consecutive attempts
+each increase SQLite `total_changes()` by exactly one, retain marker `2`, and
+their admission plan searches only the receipt and evidence primary keys, not
+the document snapshot or hash index.
+
+Strict current-store tests cover v36 Preparing, Ready and Published forward
+receipts plus Preparing and Ready initialization receipts before upgrading to
+v37. Existing v35 recovery remains green. The COW preservation witness compares
+the exact source-schema column layout, so the additive marker cannot hide a
+change to any preexisting receipt field. Focused migration/current-store tests,
+all 177 meta-store unit tests plus integration and doc tests, and the daemon
+restart-recovery test pass. Rust formatting, meta-store/daemon Clippy with
+warnings denied, and the performance, loop-state, autonomous-delivery,
+governance-mutation, PR-budget, privacy and diff contracts also pass. Runtime
+retries add zero queries or writes; the one-time upgrade reuses the existing
+encrypted COW copy and adds no index or unbounded in-memory collection.
+
 ## Issue #436 Requested deletion checkpoint reconciliation
 
 Issue #436 keeps `MetaStore::set_source_root_deletion_phase` as the sole public
