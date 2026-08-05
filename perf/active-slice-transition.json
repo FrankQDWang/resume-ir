@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-433-to-436-requested-checkpoint-reconciliation-2026-08-05",
-  "from_issue": "#433",
-  "to_issue": "#436",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/433#issuecomment-5189411141",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/436",
-  "base_active_goal_sha256": "6adcdbb3d93455adbe0dc9af8b9071af58ebee1c92396f0a0dfe3ea182fd395b",
+  "transition_id": "issue-436-to-440-deletion-checkpoint-protocol-2026-08-05",
+  "from_issue": "#436",
+  "to_issue": "#440",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/436#issuecomment-5190334183",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/440",
+  "base_active_goal_sha256": "e43caddf4d7864db65eac2a705a5b826a130a61b5c9af5da43dda7008dd979d8",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
