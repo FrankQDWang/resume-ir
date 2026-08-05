@@ -8,6 +8,7 @@ import importlib.util
 import pathlib
 import tomllib
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -44,6 +45,10 @@ class GovernanceContractMutationTests(unittest.TestCase):
         cls.performance_checker = load_module(
             ROOT / "scripts" / "ci" / "check-performance-contracts.py",
             "performance_contract_checker_under_test",
+        )
+        cls.pr_budget_checker = load_module(
+            ROOT / "scripts" / "ci" / "check-pr-budget.py",
+            "pr_budget_checker_under_test",
         )
         cls.embedding_observation_checker = load_module(
             ROOT / "scripts" / "ci" / "check-embedding-input-observation.py",
@@ -135,11 +140,6 @@ class GovernanceContractMutationTests(unittest.TestCase):
     def test_delivery_policy_fields_are_required_and_exact(self) -> None:
         cases = [
             (
-                ("scope", "active_slice", "scope_exception"),
-                self.active_goal["scope"]["active_slice"]["issue"]
-                in {"#270", "#272"},
-            ),
-            (
                 ("autonomous_delivery", "permissions", "protected_merge_allowed"),
                 True,
             ),
@@ -226,6 +226,65 @@ class GovernanceContractMutationTests(unittest.TestCase):
                 owner[path[-1]] = tampered(expected)
                 with self.assertRaises(ValueError):
                     self.validate_delivery(mutated_goal)
+
+    def test_scope_exception_is_not_bound_to_issue_number(self) -> None:
+        mutated_goal = copy.deepcopy(self.active_goal)
+        active_slice = mutated_goal["scope"]["active_slice"]
+        active_slice["issue"] = "#420"
+        active_slice["scope_exception"] = True
+        active_slice["scope_exception_reason"] = "reviewed diff exceeds the default budget"
+
+        self.validate_delivery(mutated_goal)
+
+    def test_scope_exception_structure_fails_closed(self) -> None:
+        for label, scope_exception, reason in [
+            ("non-boolean exception", "true", "reviewed exception"),
+            ("missing reason", True, ""),
+        ]:
+            with self.subTest(label=label):
+                mutated_goal = copy.deepcopy(self.active_goal)
+                mutated_goal["scope"]["active_slice"].update(
+                    scope_exception=scope_exception,
+                    scope_exception_reason=reason,
+                )
+
+                with self.assertRaises(ValueError):
+                    self.validate_delivery(mutated_goal)
+
+    def test_pr_budget_scope_exception_policy_fails_closed(self) -> None:
+        over_budget = {"commits": 1, "changed_files": 16, "net_lines": 801}
+
+        for label, scope_exception, reason, auto_merge in [
+            ("missing reason", True, "", False),
+            ("auto merge allowed", True, "reviewed exception", True),
+            ("over budget without exception", False, "no exception", False),
+        ]:
+            with self.subTest(label=label):
+                mutated_goal = copy.deepcopy(self.active_goal)
+                mutated_goal["scope"]["active_slice"].update(
+                    scope_exception=scope_exception,
+                    scope_exception_reason=reason,
+                )
+                mutated_goal["autonomous_delivery"]["pr_budget"].update(
+                    allow_scope_exception_auto_merge=auto_merge
+                )
+                with (
+                    mock.patch.object(
+                        self.pr_budget_checker,
+                        "select_base_ref",
+                        return_value="origin/main",
+                    ),
+                    mock.patch.object(
+                        self.pr_budget_checker,
+                        "actual_pr_budget",
+                        return_value=over_budget,
+                    ),
+                    self.assertRaises(ValueError),
+                ):
+                    self.pr_budget_checker.validate_actual_budget(
+                        mutated_goal,
+                        mutated_goal["autonomous_delivery"]["pr_budget"],
+                    )
 
     def test_post_merge_states_reject_bypass_transitions(self) -> None:
         for state in self.autonomous_checker.CORRECTNESS_DELIVERY_OUTGOING:

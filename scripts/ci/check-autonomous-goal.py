@@ -351,10 +351,11 @@ def validate_correctness_delivery_sequence(
         False,
         "autonomous_delivery.permissions.admin_bypass_allowed",
     )
-    require_bool(
-        active_slice.get("scope_exception"),
-        active_slice.get("issue") in {"#270", "#272"},
-        "scope.active_slice.scope_exception",
+    if not isinstance(active_slice.get("scope_exception"), bool):
+        fail("scope.active_slice.scope_exception: expected boolean")
+    require_non_empty_string(
+        active_slice.get("scope_exception_reason"),
+        "scope.active_slice.scope_exception_reason",
     )
 
     pr_budget = autonomous.get("pr_budget")
@@ -459,9 +460,6 @@ def main() -> int:
         active_slice.get("unconfigured_private_run_terminal"),
         "scope.active_slice.unconfigured_private_run_terminal",
     )
-    if not isinstance(active_slice.get("scope_exception"), bool):
-        fail("scope.active_slice.scope_exception: expected boolean")
-    require_non_empty_string(active_slice.get("scope_exception_reason"), "scope.active_slice.scope_exception_reason")
     allowed_paths = require_list(active_slice.get("allowed_paths"), "scope.active_slice.allowed_paths")
     if len(allowed_paths) != len(set(allowed_paths)):
         fail("scope.active_slice.allowed_paths: duplicate path")
