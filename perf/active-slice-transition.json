@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-420-to-433-deletion-completion-residual-owner-2026-08-05",
-  "from_issue": "#420",
-  "to_issue": "#433",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/420#issuecomment-5189254213",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/433",
-  "base_active_goal_sha256": "be4d602f4244dc1459a51eeb8f3b94190264a002b4b201c1e739f34f92df1495",
+  "transition_id": "issue-433-to-436-requested-checkpoint-reconciliation-2026-08-05",
+  "from_issue": "#433",
+  "to_issue": "#436",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/433#issuecomment-5189411141",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/436",
+  "base_active_goal_sha256": "6adcdbb3d93455adbe0dc9af8b9071af58ebee1c92396f0a0dfe3ea182fd395b",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
