@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-436-to-440-deletion-checkpoint-protocol-2026-08-05",
-  "from_issue": "#436",
-  "to_issue": "#440",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/436#issuecomment-5190334183",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/440",
-  "base_active_goal_sha256": "e43caddf4d7864db65eac2a705a5b826a130a61b5c9af5da43dda7008dd979d8",
+  "transition_id": "issue-440-to-443-legacy-quiescing-reconciliation-2026-08-05",
+  "from_issue": "#440",
+  "to_issue": "#443",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/440#issuecomment-5193376647",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/443",
+  "base_active_goal_sha256": "b53f2f2dda8d579b4e1f3e243261f25f22612170b179f034348cc19a4f7cd211",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
