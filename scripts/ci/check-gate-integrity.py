@@ -411,6 +411,18 @@ def validate_transition_record_shape(raw: dict, base_issue: str, head_issue: str
     return current_main_attribution
 
 
+def validate_successor_scope_exception(
+    active_slice: dict,
+    *,
+    historical_exception_required: bool,
+) -> None:
+    value = active_slice.get("scope_exception")
+    if not isinstance(value, bool):
+        fail("head.scope.active_slice.scope_exception: expected boolean")
+    if historical_exception_required:
+        require_bool(value, True, "head.scope.active_slice.scope_exception")
+
+
 def self_test_transition_record_shapes() -> None:
     common = {key: None for key in TRANSITION_COMMON_KEYS}
     v1 = common | {
@@ -437,6 +449,42 @@ def self_test_transition_record_shapes() -> None:
         except ValueError:
             continue
         fail(f"transition shape self-test accepted {label}")
+
+
+def self_test_successor_scope_exception_contract() -> None:
+    for value in (False, True):
+        validate_successor_scope_exception(
+            {"scope_exception": value},
+            historical_exception_required=False,
+        )
+
+    for label, active_slice in (
+        ("missing value", {}),
+        ("string value", {"scope_exception": "true"}),
+        ("integer value", {"scope_exception": 1}),
+    ):
+        try:
+            validate_successor_scope_exception(
+                active_slice,
+                historical_exception_required=False,
+            )
+        except ValueError:
+            continue
+        fail(f"successor scope-exception self-test accepted {label}")
+
+    for label in ("current-main attribution", "current-main reactivation"):
+        validate_successor_scope_exception(
+            {"scope_exception": True},
+            historical_exception_required=True,
+        )
+        try:
+            validate_successor_scope_exception(
+                {"scope_exception": False},
+                historical_exception_required=True,
+            )
+        except ValueError:
+            continue
+        fail(f"successor scope-exception self-test accepted false for {label}")
 
 
 def validate_current_main_reactivation_contract(raw: dict, head_slice: dict) -> None:
@@ -830,8 +878,12 @@ def validate_declared_successor_transition(
     for key, value in privacy.items():
         require_bool(value, False, f"{SUCCESSOR_TRANSITION_RECORD}.privacy.{key}")
     require_bool(base_slice.get("contract_change_allowed"), True, "base.scope.active_slice.contract_change_allowed")
-    require_bool(head_slice.get("scope_exception"), current_main_attribution or current_main_reactivation,
-                 "head.scope.active_slice.scope_exception")
+    validate_successor_scope_exception(
+        head_slice,
+        historical_exception_required=(
+            current_main_attribution or current_main_reactivation
+        ),
+    )
     allowed_paths = head_slice.get("allowed_paths")
     if not isinstance(allowed_paths, list) or not all(isinstance(path, str) and path for path in allowed_paths):
         fail("successor active slice requires non-empty allowed_paths")
@@ -1423,6 +1475,7 @@ def is_gate_path(path: str) -> bool:
 
 def main() -> int:
     self_test_transition_record_shapes()
+    self_test_successor_scope_exception_contract()
     self_test_current_main_reactivation_contract()
     self_test_current_main_same_issue_evidence_scope()
     if sys.argv[1:]:
