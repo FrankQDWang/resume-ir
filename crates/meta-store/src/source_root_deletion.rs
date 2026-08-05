@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use core_domain::DocumentId;
-use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, OptionalExtension, Row, TransactionBehavior};
 
 use crate::{
     MetaStoreError, MetadataStore, MetadataStoreAccess, MetadataStoreWriteAccess, Result,
@@ -20,7 +20,7 @@ pub enum SourceRootDeletionPhase {
 }
 
 impl SourceRootDeletionPhase {
-    fn storage(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Requested => "requested",
             Self::Quiescing => "quiescing",
@@ -46,6 +46,46 @@ impl SourceRootDeletionPhase {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceRootDeletionErrorCode {
+    ImportQuiescenceTimeout,
+    OcrQuiescenceTimeout,
+    PublicationFailed,
+    MetadataPurgeFailed,
+    PrivacyCleanupFailed,
+    ReceiptCompletionFailed,
+    Internal,
+}
+
+impl SourceRootDeletionErrorCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ImportQuiescenceTimeout => "import_quiescence_timeout",
+            Self::OcrQuiescenceTimeout => "ocr_quiescence_timeout",
+            Self::PublicationFailed => "publication_failed",
+            Self::MetadataPurgeFailed => "metadata_purge_failed",
+            Self::PrivacyCleanupFailed => "privacy_cleanup_failed",
+            Self::ReceiptCompletionFailed => "receipt_completion_failed",
+            Self::Internal => "internal",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "import_quiescence_timeout" => Ok(Self::ImportQuiescenceTimeout),
+            "ocr_quiescence_timeout" => Ok(Self::OcrQuiescenceTimeout),
+            "publication_failed" => Ok(Self::PublicationFailed),
+            "metadata_purge_failed" => Ok(Self::MetadataPurgeFailed),
+            "privacy_cleanup_failed" => Ok(Self::PrivacyCleanupFailed),
+            "receipt_completion_failed" => Ok(Self::ReceiptCompletionFailed),
+            "internal" => Ok(Self::Internal),
+            _ => Err(MetaStoreError::invalid_value(
+                "source_root_deletion_attempt_evidence.last_error_code",
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceRootDeletion {
     pub root_id: SourceRootId,
@@ -55,7 +95,37 @@ pub struct SourceRootDeletion {
     pub started_at: UnixTimestamp,
     pub updated_at: UnixTimestamp,
     pub completed_at: Option<UnixTimestamp>,
+    pub attempt_count: u64,
+    pub last_attempt_at: Option<UnixTimestamp>,
+    pub last_error_phase: Option<SourceRootDeletionPhase>,
+    pub last_error_code: Option<SourceRootDeletionErrorCode>,
+    pub last_error_at: Option<UnixTimestamp>,
 }
+
+type PersistedSourceRootDeletion = (
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+    i64,
+    Option<i64>,
+    i64,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+);
+
+const SOURCE_ROOT_DELETION_COLUMNS: &str =
+    "deletion.root_id, deletion.phase, deletion.affected_documents, \
+     deletion.removed_documents, deletion.started_at_seconds, \
+     deletion.updated_at_seconds, deletion.completed_at_seconds, \
+     evidence.attempt_count, evidence.last_attempt_at_seconds, \
+     evidence.last_error_phase, evidence.last_error_code, \
+     evidence.last_error_at_seconds";
+
+const MAX_RECENT_DELETION_ATTEMPTS: usize = 16;
 
 impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     pub fn source_root_deletion(
@@ -65,38 +135,45 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         self.connection
             .borrow()
             .query_row(
-                "SELECT root_id, phase, affected_documents, removed_documents,
-                        started_at_seconds, updated_at_seconds, completed_at_seconds
-                 FROM source_root_deletion WHERE root_id = ?1",
+                &format!(
+                    "SELECT {SOURCE_ROOT_DELETION_COLUMNS}
+                 FROM source_root_deletion AS deletion
+                 LEFT JOIN source_root_deletion_attempt_evidence AS evidence
+                   ON evidence.root_id = deletion.root_id
+                 WHERE deletion.root_id = ?1"
+                ),
                 params![root_id.as_str()],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, i64>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, i64>(4)?,
-                        row.get::<_, i64>(5)?,
-                        row.get::<_, Option<i64>>(6)?,
-                    ))
-                },
+                read_persisted_deletion,
             )
             .optional()
             .map_err(MetaStoreError::storage)?
-            .map(
-                |(root_id, phase, affected, removed, started, updated, completed)| {
-                    Ok(SourceRootDeletion {
-                        root_id: SourceRootId::from_str(&root_id)?,
-                        phase: SourceRootDeletionPhase::parse(&phase)?,
-                        affected_documents: to_u64(affected)?,
-                        removed_documents: to_u64(removed)?,
-                        started_at: UnixTimestamp::from_unix_seconds(started),
-                        updated_at: UnixTimestamp::from_unix_seconds(updated),
-                        completed_at: completed.map(UnixTimestamp::from_unix_seconds),
-                    })
-                },
-            )
+            .map(source_root_deletion_from_persisted)
             .transpose()
+    }
+
+    pub fn recent_source_root_deletion_attempts(&self) -> Result<Vec<SourceRootDeletion>> {
+        let connection = self.connection.borrow();
+        let mut statement = connection
+            .prepare(&format!(
+                "SELECT {SOURCE_ROOT_DELETION_COLUMNS}
+                 FROM source_root_deletion AS deletion
+                 JOIN source_root_deletion_attempt_evidence AS evidence
+                   ON evidence.root_id = deletion.root_id
+                 WHERE evidence.attempt_count > 0
+                   AND deletion.phase NOT IN ('complete', 'failed')
+                 ORDER BY evidence.last_attempt_at_seconds DESC, deletion.root_id
+                 LIMIT {MAX_RECENT_DELETION_ATTEMPTS}"
+            ))
+            .map_err(MetaStoreError::storage)?;
+        let attempts = statement
+            .query_map([], read_persisted_deletion)
+            .map_err(MetaStoreError::storage)?
+            .map(|row| {
+                row.map_err(MetaStoreError::storage)
+                    .and_then(source_root_deletion_from_persisted)
+            })
+            .collect();
+        attempts
     }
 
     pub fn incomplete_source_root_deletions(&self) -> Result<Vec<SourceRootDeletion>> {
@@ -208,6 +285,21 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             .map_err(MetaStoreError::storage)?;
         transaction
             .execute(
+                "INSERT INTO source_root_deletion_attempt_evidence (
+                    root_id, attempt_count, last_attempt_at_seconds,
+                    last_error_phase, last_error_code, last_error_at_seconds
+                 ) VALUES (?1, 0, NULL, NULL, NULL, NULL)
+                 ON CONFLICT(root_id) DO UPDATE SET
+                    attempt_count = 0,
+                    last_attempt_at_seconds = NULL,
+                    last_error_phase = NULL,
+                    last_error_code = NULL,
+                    last_error_at_seconds = NULL",
+                params![root_id.as_str()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction
+            .execute(
                 "DELETE FROM source_root_deletion_document WHERE root_id = ?1",
                 params![root_id.as_str()],
             )
@@ -231,6 +323,91 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         }
         transaction.commit().map_err(MetaStoreError::storage)?;
         drop(connection);
+        self.source_root_deletion(root_id)?
+            .ok_or_else(MetaStoreError::storage_invariant)
+    }
+
+    pub fn begin_source_root_deletion_attempt(
+        &self,
+        root_id: &SourceRootId,
+        now: UnixTimestamp,
+    ) -> Result<SourceRootDeletion>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        let changed = self
+            .connection
+            .borrow()
+            .execute(
+                "UPDATE source_root_deletion_attempt_evidence
+                 SET attempt_count = CASE
+                       WHEN attempt_count < 9007199254740991
+                       THEN attempt_count + 1
+                       ELSE attempt_count
+                     END,
+                     last_attempt_at_seconds = MAX(
+                        COALESCE(last_attempt_at_seconds, 0), ?2
+                     ),
+                     last_error_phase = NULL,
+                     last_error_code = NULL,
+                     last_error_at_seconds = NULL
+                 WHERE root_id = ?1
+                   AND EXISTS (
+                     SELECT 1 FROM source_root_deletion AS deletion
+                     WHERE deletion.root_id = ?1
+                       AND deletion.phase NOT IN ('complete', 'failed')
+                   )",
+                params![root_id.as_str(), now.as_unix_seconds()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        if changed != 1 {
+            return Err(MetaStoreError::invalid_transition());
+        }
+        self.source_root_deletion(root_id)?
+            .ok_or_else(MetaStoreError::storage_invariant)
+    }
+
+    pub fn record_source_root_deletion_attempt_failure(
+        &self,
+        root_id: &SourceRootId,
+        phase: SourceRootDeletionPhase,
+        code: SourceRootDeletionErrorCode,
+        now: UnixTimestamp,
+    ) -> Result<SourceRootDeletion>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        if matches!(
+            phase,
+            SourceRootDeletionPhase::Complete | SourceRootDeletionPhase::Failed
+        ) {
+            return Err(MetaStoreError::invalid_transition());
+        }
+        let changed = self
+            .connection
+            .borrow()
+            .execute(
+                "UPDATE source_root_deletion_attempt_evidence
+                 SET last_error_phase = ?2,
+                     last_error_code = ?3,
+                     last_error_at_seconds = MAX(last_attempt_at_seconds, ?4)
+                 WHERE root_id = ?1
+                   AND last_attempt_at_seconds IS NOT NULL
+                   AND EXISTS (
+                     SELECT 1 FROM source_root_deletion AS deletion
+                     WHERE deletion.root_id = ?1 AND deletion.phase = ?2
+                   )",
+                params![
+                    root_id.as_str(),
+                    phase.as_str(),
+                    code.as_str(),
+                    now.as_unix_seconds(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        if changed != 1 {
+            return Err(MetaStoreError::invalid_transition());
+        }
         self.source_root_deletion(root_id)?
             .ok_or_else(MetaStoreError::storage_invariant)
     }
@@ -263,10 +440,10 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                  WHERE root_id = ?1 AND phase = ?5",
                 params![
                     root_id.as_str(),
-                    phase.storage(),
+                    phase.as_str(),
                     now.as_unix_seconds(),
                     completed,
-                    current.storage()
+                    current.as_str()
                 ],
             )
             .map_err(MetaStoreError::storage)?;
@@ -525,6 +702,62 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     }
 }
 
+fn read_persisted_deletion(row: &Row<'_>) -> rusqlite::Result<PersistedSourceRootDeletion> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+        row.get(9)?,
+        row.get(10)?,
+        row.get(11)?,
+    ))
+}
+
+fn source_root_deletion_from_persisted(
+    persisted: PersistedSourceRootDeletion,
+) -> Result<SourceRootDeletion> {
+    let (
+        root_id,
+        phase,
+        affected,
+        removed,
+        started,
+        updated,
+        completed,
+        attempt_count,
+        last_attempt,
+        last_error_phase,
+        last_error_code,
+        last_error_at,
+    ) = persisted;
+    Ok(SourceRootDeletion {
+        root_id: SourceRootId::from_str(&root_id)?,
+        phase: SourceRootDeletionPhase::parse(&phase)?,
+        affected_documents: to_u64(affected)?,
+        removed_documents: to_u64(removed)?,
+        started_at: UnixTimestamp::from_unix_seconds(started),
+        updated_at: UnixTimestamp::from_unix_seconds(updated),
+        completed_at: completed.map(UnixTimestamp::from_unix_seconds),
+        attempt_count: to_u64(attempt_count)?,
+        last_attempt_at: last_attempt.map(UnixTimestamp::from_unix_seconds),
+        last_error_phase: last_error_phase
+            .as_deref()
+            .map(SourceRootDeletionPhase::parse)
+            .transpose()?,
+        last_error_code: last_error_code
+            .as_deref()
+            .map(SourceRootDeletionErrorCode::parse)
+            .transpose()?,
+        last_error_at: last_error_at.map(UnixTimestamp::from_unix_seconds),
+    })
+}
+
 fn to_u64(value: i64) -> Result<u64> {
     u64::try_from(value).map_err(|_| MetaStoreError::storage_invariant())
 }
@@ -554,3 +787,7 @@ fn deletion_phase_transition_allowed(
             ) | (_, SourceRootDeletionPhase::Failed)
         )
 }
+
+#[cfg(test)]
+#[path = "source_root_deletion_tests.rs"]
+mod tests;

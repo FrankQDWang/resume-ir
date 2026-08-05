@@ -11,7 +11,7 @@ use crate::{
     active_store_manifest::{
         sync_parent_directory, validate_owner_regular_metadata, ActiveStoreManifest,
     },
-    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, schema_v35,
+    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, schema_v35, schema_v36,
     MetaStoreError, Result,
 };
 
@@ -159,7 +159,7 @@ fn validate(receipt: &MigrationReceipt) -> Result<()> {
     let legacy_v30_pair = receipt.source.schema_version == schema_v29::VERSION
         && receipt.target.schema_version == schema_v30::VERSION
         && receipt.staging_file == legacy_v30_staging;
-    let current_pair = matches!(
+    let prior_current_pair = matches!(
         receipt.source.schema_version,
         schema_v29::VERSION
             | schema_v30::VERSION
@@ -169,7 +169,18 @@ fn validate(receipt: &MigrationReceipt) -> Result<()> {
             | schema_v34::VERSION
     ) && receipt.target.schema_version == schema_v35::VERSION
         && receipt.staging_file == current_staging;
-    if (!legacy_v30_pair && !current_pair)
+    let current_pair = matches!(
+        receipt.source.schema_version,
+        schema_v29::VERSION
+            | schema_v30::VERSION
+            | schema_v31::VERSION
+            | schema_v32::VERSION
+            | schema_v33::VERSION
+            | schema_v34::VERSION
+            | schema_v35::VERSION
+    ) && receipt.target.schema_version == schema_v36::VERSION
+        && receipt.staging_file == current_staging;
+    if (!legacy_v30_pair && !prior_current_pair && !current_pair)
         || receipt.source.store_id_digest != receipt.target.store_id_digest
         || receipt.target.file_name != expected_target
     {

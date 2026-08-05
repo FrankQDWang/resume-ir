@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, Transaction};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, schema_v35,
+    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, schema_v35, schema_v36,
     MetaStoreError, Result, SourceRootId,
 };
 
@@ -14,6 +14,7 @@ const V31_TO_V32_NAME: &str = "source-root-durable-deletion";
 const V32_TO_V33_NAME: &str = "pdfium-parser-reprocessing";
 const V33_TO_V34_NAME: &str = "processing-contract-upgrade-coordinator";
 const V34_TO_V35_NAME: &str = "source-file-observation";
+const V35_TO_V36_NAME: &str = "source-root-deletion-attempt-evidence";
 const PDFIUM_PARSER_CONTRACT: &str = "parser-pdfium-v2";
 const PDF_REPROCESS_LOOKUP_INDEX: &str = "__migration_pdf_reprocess_resume_lookup";
 
@@ -89,7 +90,7 @@ pub(super) fn validate_chain(connection: &Connection, from: u32, to: u32) -> Res
 }
 
 pub(super) fn apply_current_schema(connection: &mut Connection, from: u32) -> Result<()> {
-    apply_chain(connection, from, schema_v35::VERSION)
+    apply_chain(connection, from, schema_v36::VERSION)
 }
 
 fn apply_step(connection: &mut Connection, step: &MigrationStep) -> Result<()> {
@@ -487,7 +488,43 @@ fn validate_v35(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn registry() -> [MigrationStep; 6] {
+fn apply_v35_to_v36(transaction: &Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(schema_v36::SCHEMA)
+        .map_err(MetaStoreError::migration)
+}
+
+fn validate_v36(connection: &Connection) -> Result<()> {
+    let tables = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table'
+               AND name = 'source_root_deletion_attempt_evidence'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    if tables != 1 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let missing_evidence = connection
+        .query_row(
+            "SELECT COUNT(*)
+             FROM source_root_deletion AS deletion
+             LEFT JOIN source_root_deletion_attempt_evidence AS evidence
+               ON evidence.root_id = deletion.root_id
+             WHERE evidence.root_id IS NULL",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    if missing_evidence != 0 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    Ok(())
+}
+
+fn registry() -> [MigrationStep; 7] {
     [
         MigrationStep {
             from: schema_v29::VERSION,
@@ -536,6 +573,14 @@ fn registry() -> [MigrationStep; 6] {
             schema: schema_v35::SCHEMA,
             apply: apply_v34_to_v35,
             validate: validate_v35,
+        },
+        MigrationStep {
+            from: schema_v35::VERSION,
+            to: schema_v36::VERSION,
+            name: V35_TO_V36_NAME,
+            schema: schema_v36::SCHEMA,
+            apply: apply_v35_to_v36,
+            validate: validate_v36,
         },
     ]
 }

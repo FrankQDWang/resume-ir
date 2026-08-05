@@ -227,7 +227,7 @@ fn daemon_serves_only_authenticated_redacted_v4_diagnostics() {
     assert!(response.contains("HTTP/1.1 200 OK"));
     let body = response.split("\r\n\r\n").nth(1).unwrap();
     let payload: serde_json::Value = serde_json::from_str(body).unwrap();
-    assert_eq!(payload["schema_version"], "resume-ir.diagnostics.v10");
+    assert_eq!(payload["schema_version"], "resume-ir.diagnostics.v11");
     assert_eq!(payload["privacy_boundary"], "redacted_local_aggregate");
     assert_eq!(payload["evidence_lane"], "gui_manual");
     assert_eq!(payload["evidence_status"], "unaccepted");
@@ -242,6 +242,14 @@ fn daemon_serves_only_authenticated_redacted_v4_diagnostics() {
     }
     assert!(payload["metrics"].is_object());
     assert!(payload["error_counts"].is_object());
+    assert!(payload["source_root_deletion_attempts"].is_array());
+    assert!(
+        payload["source_root_deletion_attempts"]
+            .as_array()
+            .unwrap()
+            .len()
+            <= 16
+    );
     assert_eq!(payload["benchmark_refs"], serde_json::json!([]));
     assert!(!body.contains(path_str(&data_dir)));
     assert!(!body.contains(&token));

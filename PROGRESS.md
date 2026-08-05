@@ -1,5 +1,80 @@
 # Progress
 
+## Issue #420 persistent source-root deletion attempt evidence
+
+Issue #420 is the only active slice. Metadata schema v36 adds one cascaded
+observation row per durable source-root deletion receipt. Existing v35 receipts
+migrate with `attempt_count=0`; new worker attempts update a saturating count and
+timestamp without owning or blocking retry behavior. Failure sites now emit a
+deletion-specific typed cause, which one boundary persists before returning the
+unchanged transport failure. No diagnostic cause is inferred from human copy or
+from phase.
+
+The schema-v36 startup path also preserves the exact prior-current v35 metadata
+receipt state machine. Strict nine-field v35 forward receipts in Preparing,
+Ready or Published state reconcile using their recorded files before the v36
+migration proceeds. The schema-less initialization receipt checks only the two
+receipt-ID-derived v35/v36 filename generations; one exact valid target may
+publish, no valid target follows the existing owned cleanup path, and multiple
+valid or unexpected candidates fail closed. It does not scan the directory,
+guess from arbitrary names, widen parsing, delete unknown files or dual-write.
+
+Diagnostics v11 replaces v10 with one strict wire shape and exposes
+`source_root_deletion_attempts`: `null` when
+metadata is unavailable, otherwise at most 16 newest incomplete attempted
+receipts. The projection contains only phase, count, timestamps and fixed error
+enums. Its seven error codes are limited to current persistence producers:
+`import_quiescence_timeout`, `ocr_quiescence_timeout`, `publication_failed`,
+`metadata_purge_failed`, `privacy_cleanup_failed`,
+`receipt_completion_failed` and `internal`. It excludes completed/failed
+history, identifiers, paths, raw errors, resume/query/candidate data and
+residual inventory. Rust and TypeScript strict
+consumers, including macOS installed acceptance, enforce the same exact keys,
+bound and vocabulary; the UI does not present a new state. No v10/v11
+compatibility parser or optional-field fallback was added.
+
+Focused evidence currently passes schema backfill, durable reopen, saturating
+attempt continuation, completed-record exclusion, fixed typed cause, unchanged
+capped retry delays, successful deletion, diagnostics privacy shape and strict
+desktop decoding. No real local database, private corpus, stale-receipt repair,
+residual cleanup, retry-policy, phase, queue, root epoch, UI, Windows or Linux
+work was performed.
+
+Final local verification passed all 170 meta-store unit tests plus all
+integration and doc tests, including 15 current-store tests and six exact-format
+v35 receipt recovery cases; all 120 daemon unit tests; IPC integration with 23
+passes and 14 reviewed-runtime-pack skips; all five v27/v28 convergence tests;
+the focused desktop Rust diagnostics decoder; 17 frontend daemon-contract tests;
+eight focused macOS installed-acceptance IPC contract tests; the TypeScript/Vite
+production build; warnings-denied Clippy for meta-store, daemon and desktop;
+format; performance/autonomous/loop contracts; seven governance mutation tests;
+PR budget; public-repository guard; and diff check.
+The separate gate-integrity script was not run past its clean-index precondition
+because this handoff intentionally remains an unstaged review diff and the
+worktree also contains three pre-existing user research files; no staging was
+performed.
+
+Gate 0 runtime capability attestation passed with redacted results only:
+workspace write, network, GitHub read/write, git push, protected squash merge,
+branch-protection compatibility, configured private resume-root read,
+configured SeekTalent artifact-root read and automation scheduling are
+available. No private path or file content was printed or read. GitHub reports
+that `main` requires the `contract-and-unit` check and linear history, disallows
+force pushes and deletions, and enforces protection for administrators. The
+reviewed 40-path/1,929-changed-line #420 delivery therefore records a truthful
+scope exception and must use a normal protected squash merge; auto-merge,
+admin bypass, direct `main` push and gate weakening remain forbidden.
+
+Gate 0 then stopped in terminal `contract_conflict` before staging. The active
+slice must set `scope_exception=true` to pass the PR-budget contract, but
+`scripts/ci/check-autonomous-goal.py` and its governance mutation test pin that
+value to false for every issue except #270/#272. Allowing #420 would require
+adding those two checker files as paths 41 and 42, outside the reviewed 40-path
+slice. Neither file was changed, no gate was skipped or temporarily weakened,
+and no #420 file was staged, committed, pushed or merged. The three unrelated
+research files remain untracked and untouched. Because #420 has not reached
+`origin/main`, the follow-up residual-owner slice is not activated.
+
 ## Issue #417 single managed-root progress owner contract
 
 Issue #417 is the only active slice. Installed-App diagnosis found three copies

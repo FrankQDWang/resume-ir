@@ -90,7 +90,7 @@ export function options(overrides = {}) {
 
 export function diagnostics(overrides = {}) {
   return {
-    schema_version: "resume-ir.diagnostics.v9",
+    schema_version: "resume-ir.diagnostics.v11",
     privacy_boundary: "redacted_local_aggregate",
     contains_raw_resume_text: false,
     contains_queries: false,
@@ -107,6 +107,12 @@ export function diagnostics(overrides = {}) {
       ocr: { state: "available", reason: null },
       classifier: { state: "available", reason: null },
       pdfium: { state: "available", reason: null },
+    },
+    writer: {
+      state: "ready",
+      reason: null,
+      transition_phase: null,
+      transition_id: null,
     },
     capabilities: {
       keyword_search: { state: "available", reason: null },
@@ -157,6 +163,7 @@ export function diagnostics(overrides = {}) {
       ocr_language_unavailable: 0,
       scan_error_buckets: [],
     },
+    source_root_deletion_attempts: [],
     benchmark_refs: [],
     ...overrides,
   };

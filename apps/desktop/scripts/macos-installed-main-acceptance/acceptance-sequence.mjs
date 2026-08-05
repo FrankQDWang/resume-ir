@@ -385,7 +385,7 @@ export async function executeAcceptance(runtime, signal) {
     },
     optional_runtime_faults: optionalRuntimeFaults,
     diagnostics: {
-      daemon_contract: "resume-ir.diagnostics.v9",
+      daemon_contract: "resume-ir.diagnostics.v11",
       lifecycle_receipt: "validated",
       privacy_boundary: "redacted_local_aggregate",
       gui_combined_export: diagnosticsEvidence,

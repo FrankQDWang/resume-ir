@@ -590,3 +590,22 @@ error-v3 HTTP 409 with closed tuple
 `CONFLICT/retry/source_root_deleting`; unrelated conflicts retain `reason=null`.
 Retryable failures use bounded same-receipt backoff without non-fatal stderr;
 stderr remains reserved for `resume-ir.daemon-fatal.v1`.
+
+## 15. 2026-08-05 diagnostics v11 deletion-attempt evidence
+
+Diagnostics v11 replaces v10 as one strict wire shape and carries required-nullable
+`source_root_deletion_attempts`. When metadata is unavailable it is `null`;
+when metadata is ready it is an array of at most 16 incomplete deletion
+receipts with `attempt_count > 0`, ordered by newest attempt. Each item contains
+only `phase`, `attempt_count`, `last_attempt_at`, `last_error_phase`, fixed
+`last_error_code`, and `last_error_at`. The producer-backed error vocabulary is
+exactly `import_quiescence_timeout`, `ocr_quiescence_timeout`,
+`publication_failed`, `metadata_purge_failed`, `privacy_cleanup_failed`,
+`receipt_completion_failed`, and `internal`.
+
+The projection never contains root identity, path, filename, raw error copy,
+resume text, query, candidate result, token, or residual inventory. Completed
+and failed receipts are excluded so historical success cannot displace active
+failure evidence. Rust and TypeScript consumers reject unknown fields, unknown
+enums, partial error tuples, unsafe counts, and arrays above 16. No frontend
+presentation behavior changes in this slice.

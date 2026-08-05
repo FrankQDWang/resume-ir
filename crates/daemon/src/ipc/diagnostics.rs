@@ -48,9 +48,23 @@ fn render_available(
     .unwrap_or(u64::MAX);
     let source_root_deletions_in_progress =
         u64::try_from(store.incomplete_source_root_deletions()?.len()).unwrap_or(u64::MAX);
+    let source_root_deletion_attempts = store
+        .recent_source_root_deletion_attempts()?
+        .into_iter()
+        .map(|receipt| {
+            serde_json::json!({
+                "phase": receipt.phase.as_str(),
+                "attempt_count": receipt.attempt_count,
+                "last_attempt_at": receipt.last_attempt_at.map(|value| value.as_unix_seconds()),
+                "last_error_phase": receipt.last_error_phase.map(|value| value.as_str()),
+                "last_error_code": receipt.last_error_code.map(|value| value.as_str()),
+                "last_error_at": receipt.last_error_at.map(|value| value.as_unix_seconds()),
+            })
+        })
+        .collect::<Vec<_>>();
     let ipc = process_metrics().snapshot();
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.diagnostics.v10",
+        "schema_version": "resume-ir.diagnostics.v11",
         "privacy_boundary": "redacted_local_aggregate",
         "contains_raw_resume_text": false,
         "contains_queries": false,
@@ -97,6 +111,7 @@ fn render_available(
             "ocr_language_unavailable": summary.ocr_language_unavailable,
             "scan_error_buckets": scan_error_buckets,
         },
+        "source_root_deletion_attempts": source_root_deletion_attempts,
         "benchmark_refs": [],
     });
     merge_health(&mut body, core, runtimes, writer, capabilities);
@@ -110,7 +125,7 @@ pub(crate) fn render_without_store(
     capabilities: CapabilityMatrix,
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.diagnostics.v10",
+        "schema_version": "resume-ir.diagnostics.v11",
         "privacy_boundary": "redacted_local_aggregate",
         "contains_raw_resume_text": false,
         "contains_queries": false,
@@ -152,6 +167,7 @@ pub(crate) fn render_without_store(
             "ocr_language_unavailable": serde_json::Value::Null,
             "scan_error_buckets": [],
         },
+        "source_root_deletion_attempts": serde_json::Value::Null,
         "error": super::capability::service_error_json(core),
         "benchmark_refs": [],
     });
@@ -220,7 +236,7 @@ mod tests {
             CapabilityMatrix::derive(core, runtimes, WriterHealth::ready()),
         );
 
-        assert_eq!(value["schema_version"], "resume-ir.diagnostics.v10");
+        assert_eq!(value["schema_version"], "resume-ir.diagnostics.v11");
         assert_eq!(value["process_state"], "ready");
         assert_eq!(value["core"]["state"], "degraded");
         assert_eq!(value["core"]["reason"], "metadata_unavailable");
@@ -239,10 +255,10 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_v9_shared_fixture_matches_producer_shape() {
+    fn diagnostics_v11_shared_fixture_matches_producer_shape() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/desktop/src-tauri/tests/fixtures/daemon-diagnostics-v9-ready.json"
+            "/../../apps/desktop/src-tauri/tests/fixtures/daemon-diagnostics-v11-ready.json"
         )))
         .unwrap();
         let core = CoreHealth {
@@ -266,6 +282,7 @@ mod tests {
         for key in [
             "core",
             "optional_runtimes",
+            "writer",
             "capabilities",
             "metrics",
             "error_counts",
