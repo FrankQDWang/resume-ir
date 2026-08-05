@@ -5,24 +5,44 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "17e30fa64271fa205d4c682a3e681ea464b5e0a638e3fefdf6dc91dd1625f1e7",
+    "active_goal_sha256": "be4d602f4244dc1459a51eeb8f3b94190264a002b4b201c1e739f34f92df1495",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "236da328be105c5b59d326d3282d9a812eca77f0"
+    "git_head_sha": "e4b564d7f5341c9eb9ba1ad3e11eeed6a2d37855"
   },
-  "current_slice": "#424 generic successor scope-exception gate owner",
+  "current_slice": "#420 persistent source-root deletion attempt evidence",
   "hypothesis": {
-    "id": "issue-424-generic-successor-scope-exception-owner",
+    "id": "issue-420-source-root-deletion-attempt-evidence",
     "acceptance_cell": "w0_docs",
-    "expected_effect": "generic successors require explicit booleans without issue-derived truth while historical true-only contracts and the PR-budget owner retain their existing semantics",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/424",
+    "expected_effect": "one durable bounded attempt row and typed failure cause make incomplete deletion retries observable across restart without changing deletion or retry behavior",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/420",
     "after_measurement_ref": "pending",
     "reprofile_ref": "not_applicable_correctness_slice",
     "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/420"
+    },
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/424#issuecomment-5188427286"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/426"
+    },
+    {
+      "from": "slice_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/424"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3575,15 +3595,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-424-generic-successor-scope-exception-owner-2026-08-05",
+  "run_id": "issue-420-source-root-deletion-attempt-evidence-2026-08-05",
   "state_version": 648,
   "previous_state_hash": "d29daf0c231f251dcc48ed127cee29ecbcad9b9a01ac0743e02f815000bec2ba",
   "expected_state_version": 648,
-  "last_confirmed_side_effect": "issue_424_activation_contract_selected",
+  "last_confirmed_side_effect": "issue_420_reactivation_contract_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#424",
+    "primary_issue": "#420",
     "active_prs": [],
     "open_blockers": []
   }
