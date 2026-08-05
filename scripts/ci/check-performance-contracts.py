@@ -157,7 +157,7 @@ FORWARD_MIGRATION_FEATURE_TRAIN_IDENTITY = {
     "train_final_schema": 35,
     "intermediate_schema_versions": [34],
     "current_product_version": "0.1.9",
-    "current_metadata_schema": 36,
+    "current_metadata_schema": 37,
     "pre_v29_runtime_migration_allowed": False,
     "future_schema_read_allowed": False,
     "migration_dual_reader_allowed": False,
@@ -765,15 +765,15 @@ def validate_forward_migration_feature_train(matrix: Mapping[str, object]) -> No
 
 def validate_current_metadata_schema_source() -> None:
     schema_source = (
-        ROOT / "crates" / "meta-store" / "src" / "schema_v36.rs"
+        ROOT / "crates" / "meta-store" / "src" / "schema_v37.rs"
     ).read_text(encoding="utf-8")
-    if "pub(super) const VERSION: u32 = 36;" not in schema_source:
-        fail("crates/meta-store/src/schema_v36.rs: expected schema version 36")
+    if "pub(super) const VERSION: u32 = 37;" not in schema_source:
+        fail("crates/meta-store/src/schema_v37.rs: expected schema version 37")
     lib_source = (
         ROOT / "crates" / "meta-store" / "src" / "lib.rs"
     ).read_text(encoding="utf-8")
-    if "pub const CURRENT_SCHEMA_VERSION: u32 = schema_v36::VERSION;" not in lib_source:
-        fail("crates/meta-store/src/lib.rs: CURRENT_SCHEMA_VERSION must use schema_v36")
+    if "pub const CURRENT_SCHEMA_VERSION: u32 = schema_v37::VERSION;" not in lib_source:
+        fail("crates/meta-store/src/lib.rs: CURRENT_SCHEMA_VERSION must use schema_v37")
 
 
 def validate_exact_contract_section(
@@ -1046,7 +1046,7 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         "owner_kind": "attribution_evidence",
         "primary_benchmark_lane": "full_import_ocr_backlog",
         "current_schema_source": "crates/meta-store/src/lib.rs::CURRENT_SCHEMA_VERSION",
-        "current_metadata_schema": 36,
+        "current_metadata_schema": 37,
         "milestones": ["first_searchable", "keyword_ready", "embedding_complete",
                        "ocr_backlog_full_import"],
         "milestone_claim_mixing_allowed": False,

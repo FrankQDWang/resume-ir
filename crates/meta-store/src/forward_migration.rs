@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, schema_v35, schema_v36,
-    MetaStoreError, Result, SourceRootId,
+    schema_v37, MetaStoreError, Result, SourceRootId,
 };
 
 const V29_TO_V30_NAME: &str = "metadata-forward-migration-history";
@@ -15,6 +15,7 @@ const V32_TO_V33_NAME: &str = "pdfium-parser-reprocessing";
 const V33_TO_V34_NAME: &str = "processing-contract-upgrade-coordinator";
 const V34_TO_V35_NAME: &str = "source-file-observation";
 const V35_TO_V36_NAME: &str = "source-root-deletion-attempt-evidence";
+const V36_TO_V37_NAME: &str = "source-root-deletion-checkpoint-protocol";
 const PDFIUM_PARSER_CONTRACT: &str = "parser-pdfium-v2";
 const PDF_REPROCESS_LOOKUP_INDEX: &str = "__migration_pdf_reprocess_resume_lookup";
 
@@ -90,7 +91,7 @@ pub(super) fn validate_chain(connection: &Connection, from: u32, to: u32) -> Res
 }
 
 pub(super) fn apply_current_schema(connection: &mut Connection, from: u32) -> Result<()> {
-    apply_chain(connection, from, schema_v36::VERSION)
+    apply_chain(connection, from, schema_v37::VERSION)
 }
 
 fn apply_step(connection: &mut Connection, step: &MigrationStep) -> Result<()> {
@@ -524,7 +525,49 @@ fn validate_v36(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn registry() -> [MigrationStep; 7] {
+fn apply_v36_to_v37(transaction: &Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(schema_v37::SCHEMA)
+        .map_err(MetaStoreError::migration)
+}
+
+fn validate_v37(connection: &Connection) -> Result<()> {
+    let column = connection
+        .query_row(
+            "SELECT type, \"notnull\", dflt_value
+             FROM pragma_table_info('source_root_deletion')
+             WHERE name = 'checkpoint_protocol_version'",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .map_err(MetaStoreError::storage)?;
+    if column != ("INTEGER".to_string(), 1, Some("1".to_string())) {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let invalid_versions = connection
+        .query_row(
+            "SELECT COUNT(*) FROM source_root_deletion
+             WHERE checkpoint_protocol_version NOT IN (?1, ?2)",
+            params![
+                schema_v37::LEGACY_OR_UNATTESTED,
+                schema_v37::SNAPSHOT_INVARIANT_V2,
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    if invalid_versions != 0 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    Ok(())
+}
+
+fn registry() -> [MigrationStep; 8] {
     [
         MigrationStep {
             from: schema_v29::VERSION,
@@ -581,6 +624,14 @@ fn registry() -> [MigrationStep; 7] {
             schema: schema_v36::SCHEMA,
             apply: apply_v35_to_v36,
             validate: validate_v36,
+        },
+        MigrationStep {
+            from: schema_v36::VERSION,
+            to: schema_v37::VERSION,
+            name: V36_TO_V37_NAME,
+            schema: schema_v37::SCHEMA,
+            apply: apply_v36_to_v37,
+            validate: validate_v37,
         },
     ]
 }

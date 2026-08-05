@@ -19,8 +19,8 @@ use crate::{
     forward_migration,
     migration_v27::{open_encrypted_read_connection, store_identity, sync_validated_store},
     migration_v29, schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34,
-    schema_v35, schema_v36, MetaStoreError, MetadataEncryptionState, OwnedMetaStore, Result,
-    METADATA_ENCRYPTION_KEY_LEN,
+    schema_v35, schema_v36, schema_v37, MetaStoreError, MetadataEncryptionState, OwnedMetaStore,
+    Result, METADATA_ENCRYPTION_KEY_LEN,
 };
 use rusqlite::{backup::Backup, types::ValueRef, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
@@ -62,7 +62,8 @@ pub(super) fn migration_required(data_dir: &Path) -> Result<bool> {
         schema_v33::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(true),
         schema_v34::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(true),
         schema_v35::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(true),
-        schema_v36::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(false),
+        schema_v36::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(true),
+        schema_v37::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(false),
         _ => Err(MetaStoreError::unsupported_store_schema()),
     }
 }
@@ -120,7 +121,7 @@ pub(super) fn prepare_active_store(
         read_manifest_schema_version(&manifest_path)?,
     );
     match authority {
-        (2, schema_v36::VERSION) => {
+        (2, schema_v37::VERSION) => {
             let manifest = read_manifest(&manifest_path)?;
             let key = read_key(data_dir)?;
             let path = data_dir.join(&manifest.file_name);
@@ -133,7 +134,8 @@ pub(super) fn prepare_active_store(
         | (2, schema_v32::VERSION)
         | (2, schema_v33::VERSION)
         | (2, schema_v34::VERSION)
-        | (2, schema_v35::VERSION) => {
+        | (2, schema_v35::VERSION)
+        | (2, schema_v36::VERSION) => {
             let manifest = read_manifest(&manifest_path)?;
             let key = read_key(data_dir)?;
             migrate_prior(owner, manifest, key)
@@ -146,8 +148,8 @@ pub(super) fn validate_current_connection(
     connection: &Connection,
     store_id_digest: &str,
 ) -> Result<()> {
-    migration_v29::validate_active_connection(connection, schema_v36::VERSION, store_id_digest)?;
-    forward_migration::validate_chain(connection, schema_v29::VERSION, schema_v36::VERSION)
+    migration_v29::validate_active_connection(connection, schema_v37::VERSION, store_id_digest)?;
+    forward_migration::validate_chain(connection, schema_v29::VERSION, schema_v37::VERSION)
 }
 
 fn migrate_prior(
@@ -159,7 +161,7 @@ fn migrate_prior(
     let source_path = data_dir.join(&source_manifest.file_name);
     let source = open_encrypted_read_connection(&source_path, &key)?;
     validate_source_store(&source, &source_manifest)?;
-    let source_witness = PreservationWitness::capture(&source)?;
+    let source_witness = PreservationWitness::capture(&source, source_manifest.schema_version)?;
     // A store migrated by an earlier product version may still retain its own
     // predecessor and published receipt. Validate the active source first,
     // then retire that older recovery point before creating this generation's
@@ -168,10 +170,10 @@ fn migrate_prior(
 
     let migration_id = random_store_id_digest()?;
     let staging_file = format!("{STAGING_PREFIX}{}.sqlite3", &migration_id[..16]);
-    let target_file = format!("metadata-v36-{}.sqlite3", &migration_id[..16]);
+    let target_file = format!("metadata-v37-{}.sqlite3", &migration_id[..16]);
     let target_manifest = ActiveStoreManifest {
         file_name: target_file.clone(),
-        schema_version: schema_v36::VERSION,
+        schema_version: schema_v37::VERSION,
         store_id_digest: source_manifest.store_id_digest.clone(),
     };
     let mut receipt = MigrationReceipt {
@@ -229,8 +231,8 @@ fn create_fresh_store(
     let mut receipt = InitializationReceipt::new(initialization_id);
     initialization_receipt::persist(data_dir, &receipt)?;
     let key = crate::random_metadata_encryption_key()?;
-    let staging_path = data_dir.join(receipt.staging_file(InitializationGeneration::V36));
-    let target_path = data_dir.join(receipt.target_file(InitializationGeneration::V36));
+    let staging_path = data_dir.join(receipt.staging_file(InitializationGeneration::V37));
+    let target_path = data_dir.join(receipt.target_file(InitializationGeneration::V37));
     let connection = create_encrypted_writer(&staging_path, &key)?;
     let store = OwnedMetaStore::from_owned_connection(
         connection,
@@ -242,7 +244,7 @@ fn create_fresh_store(
         .applied_versions()
         .iter()
         .copied()
-        .ne(1..=schema_v36::VERSION)
+        .ne(1..=schema_v37::VERSION)
     {
         return Err(MetaStoreError::storage_invariant());
     }
@@ -252,8 +254,8 @@ fn create_fresh_store(
     fs::rename(&staging_path, &target_path).map_err(MetaStoreError::io_storage)?;
     sync_parent_directory(data_dir)?;
     let manifest = ActiveStoreManifest {
-        file_name: receipt.target_file(InitializationGeneration::V36),
-        schema_version: schema_v36::VERSION,
+        file_name: receipt.target_file(InitializationGeneration::V37),
+        schema_version: schema_v37::VERSION,
         store_id_digest: store_id_digest.clone(),
     };
     validate_current_store(&target_path, &key, &store_id_digest)?;
@@ -311,7 +313,7 @@ fn validate_store_for_manifest(
     manifest: &ActiveStoreManifest,
 ) -> Result<()> {
     let path = data_dir.join(&manifest.file_name);
-    if manifest.schema_version == schema_v36::VERSION {
+    if manifest.schema_version == schema_v37::VERSION {
         validate_current_store(&path, key, &manifest.store_id_digest)
     } else {
         if !owner_regular_file_exists(&path)? {
@@ -324,7 +326,7 @@ fn validate_store_for_manifest(
 
 fn require_current_manifest(path: &Path) -> Result<()> {
     if read_manifest_format_version(path)? != 2
-        || read_manifest_schema_version(path)? != schema_v36::VERSION
+        || read_manifest_schema_version(path)? != schema_v37::VERSION
     {
         return Err(MetaStoreError::unsupported_store_schema());
     }
@@ -341,7 +343,8 @@ fn validate_source_store(connection: &Connection, manifest: &ActiveStoreManifest
         | schema_v32::VERSION
         | schema_v33::VERSION
         | schema_v34::VERSION
-        | schema_v35::VERSION => {
+        | schema_v35::VERSION
+        | schema_v36::VERSION => {
             migration_v29::validate_active_connection(
                 connection,
                 manifest.schema_version,
@@ -619,6 +622,7 @@ pub(super) fn destroy_retained_predecessor(data_dir: &Path) -> Result<bool> {
 
 #[derive(Debug, Eq, PartialEq)]
 struct PreservationWitness {
+    source_schema_version: u32,
     source_tables: Vec<String>,
     logical_data_digest: String,
     documents: i64,
@@ -629,9 +633,10 @@ struct PreservationWitness {
 }
 
 impl PreservationWitness {
-    fn capture(connection: &Connection) -> Result<Self> {
+    fn capture(connection: &Connection, source_schema_version: u32) -> Result<Self> {
         let source_tables = preserved_source_tables(connection)?;
-        let logical_data_digest = logical_data_digest(connection, &source_tables)?;
+        let logical_data_digest =
+            logical_data_digest(connection, &source_tables, source_schema_version)?;
         let count = |table: &str| {
             connection
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
@@ -670,6 +675,7 @@ impl PreservationWitness {
             .optional()
             .map_err(MetaStoreError::storage)?;
         Ok(Self {
+            source_schema_version,
             source_tables,
             logical_data_digest,
             documents: count("document")?,
@@ -682,8 +688,13 @@ impl PreservationWitness {
 
     fn matches(&self, connection: &Connection) -> Result<bool> {
         let after = Self {
+            source_schema_version: self.source_schema_version,
             source_tables: self.source_tables.clone(),
-            logical_data_digest: logical_data_digest(connection, &self.source_tables)?,
+            logical_data_digest: logical_data_digest(
+                connection,
+                &self.source_tables,
+                self.source_schema_version,
+            )?,
             documents: connection
                 .query_row("SELECT COUNT(*) FROM document", [], |row| row.get(0))
                 .map_err(MetaStoreError::storage)?,
@@ -741,7 +752,11 @@ fn preserved_source_tables(connection: &Connection) -> Result<Vec<String>> {
     Ok(tables)
 }
 
-fn logical_data_digest(connection: &Connection, tables: &[String]) -> Result<String> {
+fn logical_data_digest(
+    connection: &Connection,
+    tables: &[String],
+    source_schema_version: u32,
+) -> Result<String> {
     let mut digest = Sha256::new();
     digest.update(b"resume-ir.metadata-logical-preservation.v1");
     for table in tables {
@@ -757,6 +772,14 @@ fn logical_data_digest(connection: &Connection, tables: &[String]) -> Result<Str
             .map_err(MetaStoreError::storage)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(MetaStoreError::storage)?;
+        let columns = columns
+            .into_iter()
+            .filter(|(column, _)| {
+                source_schema_version >= schema_v37::VERSION
+                    || table != "source_root_deletion"
+                    || column != "checkpoint_protocol_version"
+            })
+            .collect::<Vec<_>>();
         drop(column_statement);
         if columns.is_empty() {
             return Err(MetaStoreError::storage_invariant());
@@ -765,8 +788,15 @@ fn logical_data_digest(connection: &Connection, tables: &[String]) -> Result<Str
             update_digest_part(&mut digest, column.as_bytes());
         }
         let order = stable_table_order(connection, table, &columns)?;
+        let selected_columns = columns
+            .iter()
+            .map(|(column, _)| quote_identifier(column))
+            .collect::<Vec<_>>()
+            .join(", ");
         let mut row_statement = connection
-            .prepare(&format!("SELECT * FROM {quoted_table} ORDER BY {order}"))
+            .prepare(&format!(
+                "SELECT {selected_columns} FROM {quoted_table} ORDER BY {order}"
+            ))
             .map_err(MetaStoreError::storage)?;
         let column_count = columns.len();
         let mut rows = row_statement.query([]).map_err(MetaStoreError::storage)?;
