@@ -1,5 +1,31 @@
 # Progress
 
+## Issue #433 private source-root deletion completion residual owner
+
+Issue #433 removes the unused public `source_root_deletion_residual_count`
+method without a compatibility wrapper. Source-root deletion completion now has
+one module-private typed residual record, one SQL constant and one connection
+reader. The SQL returns the existing six completion blockers and their total in
+one row; `complete_source_root_deletion` executes that reader exactly once on
+the existing `Immediate` transaction before the unchanged delete and receipt
+transition sequence.
+
+The sibling synthetic test creates one row for each existing blocker:
+`source_occurrence`, `scan_snapshot`, `pdf_reprocess_job`, `import_task`,
+`authorized_import_root` and the receipt-owned document. It proves all six
+typed fields are one, the SQL-side total is six, completion fails with the
+existing storage invariant while preserving the root, receipt phase and every
+residual, and completion succeeds after those same six residuals are cleared.
+The initial red check failed only because the private type and reader did not
+yet exist.
+
+Focused verification passed, followed by all 172 meta-store unit tests, all
+meta-store integration and doc tests, warnings-denied meta-store Clippy and the
+workspace formatting check. The implementation adds no public API, schema,
+migration, diagnostics, daemon, IPC, index, extra query, write, scan, thread,
+queue or polling behavior. Runtime memory remains one fixed-size record and
+completion still performs one residual query within the original transaction.
+
 ## Issue #420 persistent source-root deletion attempt evidence
 
 Issue #420 is the only active slice. Metadata schema v36 adds one cascaded
