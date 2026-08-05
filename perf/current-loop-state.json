@@ -5,24 +5,44 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "cb4004c61a7b3d1060b2f5c5e359f5a8851304b119fe3be80266a88f5d1abdc3",
+    "active_goal_sha256": "17e30fa64271fa205d4c682a3e681ea464b5e0a638e3fefdf6dc91dd1625f1e7",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "8947ca8842bd2fea2e27057857158acdd4bb1090"
+    "git_head_sha": "236da328be105c5b59d326d3282d9a812eca77f0"
   },
-  "current_slice": "#421 scope-exception contract owner governance repair",
+  "current_slice": "#424 generic successor scope-exception gate owner",
   "hypothesis": {
-    "id": "issue-421-scope-exception-contract-owner",
+    "id": "issue-424-generic-successor-scope-exception-owner",
     "acceptance_cell": "w0_docs",
-    "expected_effect": "one generic budget owner and one structural autonomous validator remove issue-number truth binding without weakening fixed merge safety policy",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/421",
+    "expected_effect": "generic successors require explicit booleans without issue-derived truth while historical true-only contracts and the PR-budget owner retain their existing semantics",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/424",
     "after_measurement_ref": "pending",
     "reprofile_ref": "not_applicable_correctness_slice",
     "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/424"
+    },
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/421#issuecomment-5188161000"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/423"
+    },
+    {
+      "from": "slice_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/421"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3555,15 +3575,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-421-scope-exception-contract-owner-2026-08-05",
-  "state_version": 644,
-  "previous_state_hash": "b7a2288750bb628602a34ddb51f6c4efb7c5662549ca473f3c9f43a4e0f85ee3",
-  "expected_state_version": 644,
-  "last_confirmed_side_effect": "issue_421_activation_contract_selected",
+  "run_id": "issue-424-generic-successor-scope-exception-owner-2026-08-05",
+  "state_version": 648,
+  "previous_state_hash": "d29daf0c231f251dcc48ed127cee29ecbcad9b9a01ac0743e02f815000bec2ba",
+  "expected_state_version": 648,
+  "last_confirmed_side_effect": "issue_424_activation_contract_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#421",
+    "primary_issue": "#424",
     "active_prs": [],
     "open_blockers": []
   }

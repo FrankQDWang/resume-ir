@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-417-to-421-scope-exception-owner-2026-08-05",
-  "from_issue": "#417",
-  "to_issue": "#421",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/417#issuecomment-5183527507",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/421",
-  "base_active_goal_sha256": "3483b6773a654a1b75c227921a92eaab3587696c9c192fb4099e4573e09b63fc",
+  "transition_id": "issue-421-to-424-generic-successor-scope-exception-owner-2026-08-05",
+  "from_issue": "#421",
+  "to_issue": "#424",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/421#issuecomment-5188161000",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/424",
+  "base_active_goal_sha256": "cb4004c61a7b3d1060b2f5c5e359f5a8851304b119fe3be80266a88f5d1abdc3",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
