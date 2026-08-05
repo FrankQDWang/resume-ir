@@ -368,34 +368,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     where
         Access: MetadataStoreWriteAccess,
     {
-        let changed = self
-            .connection
-            .borrow()
-            .execute(
-                "UPDATE source_root_deletion_attempt_evidence
-                 SET attempt_count = CASE
-                       WHEN attempt_count < 9007199254740991
-                       THEN attempt_count + 1
-                       ELSE attempt_count
-                     END,
-                     last_attempt_at_seconds = MAX(
-                        COALESCE(last_attempt_at_seconds, 0), ?2
-                     ),
-                     last_error_phase = NULL,
-                     last_error_code = NULL,
-                     last_error_at_seconds = NULL
-                 WHERE root_id = ?1
-                   AND EXISTS (
-                     SELECT 1 FROM source_root_deletion AS deletion
-                     WHERE deletion.root_id = ?1
-                       AND deletion.phase NOT IN ('complete', 'failed')
-                   )",
-                params![root_id.as_str(), now.as_unix_seconds()],
-            )
-            .map_err(MetaStoreError::storage)?;
-        if changed != 1 {
-            return Err(MetaStoreError::invalid_transition());
-        }
+        checkpoint::begin_attempt(&mut self.connection.borrow_mut(), root_id, now)?;
         self.source_root_deletion(root_id)?
             .ok_or_else(MetaStoreError::storage_invariant)
     }

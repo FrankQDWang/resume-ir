@@ -1,11 +1,13 @@
 use rusqlite::params;
 
 use super::{
-    read_source_root_deletion_completion_residuals, SourceRootDeletionCompletionResiduals,
+    checkpoint, read_source_root_deletion_completion_residuals,
+    SourceRootDeletionCompletionResiduals,
 };
 use crate::{
-    ContentDigest, Document, DocumentId, DocumentStatus, EphemeralMetaStore, FileExtension,
-    MetaStoreErrorClass, ScanTrigger, SourceRevision, SourceRootDeletionPhase, UnixTimestamp,
+    schema_v37, ContentDigest, Document, DocumentId, DocumentStatus, EphemeralMetaStore,
+    FileExtension, MetaStoreErrorClass, ScanTrigger, SourceRevision, SourceRoot,
+    SourceRootDeletion, SourceRootDeletionPhase, SourceRootId, UnixTimestamp,
 };
 
 fn synthetic_document(label: &str, now: UnixTimestamp) -> (Document, SourceRevision) {
@@ -32,6 +34,136 @@ fn synthetic_document(label: &str, now: UnixTimestamp) -> (Document, SourceRevis
     );
     document.content_hash = Some(revision.content_hash.as_str().to_string());
     (document, revision)
+}
+
+fn deletion_snapshot_tuples(
+    store: &EphemeralMetaStore,
+    root_id: &SourceRootId,
+) -> Vec<(String, String)> {
+    store
+        .connection
+        .borrow()
+        .prepare(
+            "SELECT document_id, content_hash
+             FROM source_root_deletion_document
+             WHERE root_id = ?1
+             ORDER BY document_id, content_hash",
+        )
+        .unwrap()
+        .query_map([root_id.as_str()], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap()
+}
+
+fn total_changes(store: &EphemeralMetaStore) -> i64 {
+    store
+        .connection
+        .borrow()
+        .query_row("SELECT total_changes()", [], |row| row.get(0))
+        .unwrap()
+}
+
+fn register_scanned_root(
+    store: &EphemeralMetaStore,
+    path: &str,
+    label: &str,
+    scan_id: &str,
+    now: UnixTimestamp,
+) -> SourceRoot {
+    let root = store.register_source_root(path, path, label, now).unwrap();
+    store
+        .begin_scan(&root.id, scan_id, ScanTrigger::Manual, now)
+        .unwrap();
+    root
+}
+
+fn persist_synthetic_document(
+    store: &EphemeralMetaStore,
+    label: &str,
+    now: UnixTimestamp,
+) -> (Document, SourceRevision) {
+    let (document, revision) = synthetic_document(label, now);
+    store.upsert_document(&document).unwrap();
+    store.insert_source_revision(&revision).unwrap();
+    (document, revision)
+}
+
+fn observe(
+    store: &EphemeralMetaStore,
+    root_id: &SourceRootId,
+    document: &Document,
+    revision: &SourceRevision,
+    scan_id: &str,
+    now: UnixTimestamp,
+) {
+    store
+        .observe_source_occurrence(
+            root_id,
+            &document.file_name,
+            &document.id,
+            &revision.id,
+            scan_id,
+            now,
+        )
+        .unwrap();
+}
+
+fn make_quiescing_receipt_legacy(
+    store: &EphemeralMetaStore,
+    root_id: &SourceRootId,
+    now: UnixTimestamp,
+    stale_canonical_path: &str,
+) {
+    store.begin_source_root_deletion(root_id, now).unwrap();
+    store
+        .set_source_root_deletion_phase(root_id, SourceRootDeletionPhase::Quiescing, now)
+        .unwrap();
+    store
+        .connection
+        .borrow()
+        .execute(
+            "UPDATE source_root_deletion
+             SET checkpoint_protocol_version = ?2, canonical_path = ?3
+             WHERE root_id = ?1 AND phase = 'quiescing'",
+            params![
+                root_id.as_str(),
+                schema_v37::LEGACY_OR_UNATTESTED,
+                stale_canonical_path
+            ],
+        )
+        .unwrap();
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct DeletionTransactionWitness {
+    receipt: SourceRootDeletion,
+    canonical_path: String,
+    checkpoint_protocol_version: i64,
+    snapshot: Vec<(String, String)>,
+}
+
+fn deletion_transaction_witness(
+    store: &EphemeralMetaStore,
+    root_id: &SourceRootId,
+) -> DeletionTransactionWitness {
+    let receipt = store.source_root_deletion(root_id).unwrap().unwrap();
+    let connection = store.connection.borrow();
+    let (canonical_path, checkpoint_protocol_version) = connection
+        .query_row(
+            "SELECT canonical_path, checkpoint_protocol_version
+             FROM source_root_deletion WHERE root_id = ?1",
+            [root_id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    drop(connection);
+    DeletionTransactionWitness {
+        receipt,
+        canonical_path,
+        checkpoint_protocol_version,
+        snapshot: deletion_snapshot_tuples(store, root_id),
+    }
 }
 
 #[test]
@@ -129,6 +261,235 @@ fn requested_to_quiescing_generic_transition_reconciles_snapshot_atomically() {
     assert!(store.document_by_id(&exclusive.id).unwrap().is_some());
     assert!(store.source_root(&root_a.id).unwrap().is_some());
     assert!(store.source_root(&root_b.id).unwrap().is_some());
+    assert_eq!(
+        deletion_transaction_witness(&store, &root_a.id).checkpoint_protocol_version,
+        schema_v37::SNAPSHOT_INVARIANT_V2
+    );
+}
+
+#[test]
+fn legacy_quiescing_attempt_reconciles_once_without_stable_retry_amplification() {
+    const ROOT_A: &str = "/synthetic/legacy-quiescing-a";
+    const ROOT_B: &str = "/synthetic/legacy-quiescing-b";
+    const ROOT_C: &str = "/synthetic/legacy-quiescing-metadata-only";
+    const SCAN_A: &str = "legacy-scan-a";
+    const SCAN_B: &str = "legacy-scan-b";
+    const SCAN_C: &str = "legacy-scan-c";
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let requested_at = UnixTimestamp::from_unix_seconds(1_800_303_000);
+    let reconciled_at = UnixTimestamp::from_unix_seconds(1_800_303_010);
+    let stable_at = UnixTimestamp::from_unix_seconds(1_800_303_011);
+    let root_a = register_scanned_root(&store, ROOT_A, "Legacy Quiescing A", SCAN_A, requested_at);
+    let root_b = register_scanned_root(&store, ROOT_B, "Legacy Quiescing B", SCAN_B, requested_at);
+    let root_c = register_scanned_root(&store, ROOT_C, "Metadata-only", SCAN_C, requested_at);
+
+    let (shared, shared_revision) =
+        persist_synthetic_document(&store, "legacy-shared", requested_at);
+    observe(
+        &store,
+        &root_a.id,
+        &shared,
+        &shared_revision,
+        SCAN_A,
+        requested_at,
+    );
+    make_quiescing_receipt_legacy(
+        &store,
+        &root_a.id,
+        requested_at,
+        "/synthetic/stale-authority",
+    );
+
+    observe(
+        &store,
+        &root_b.id,
+        &shared,
+        &shared_revision,
+        SCAN_B,
+        requested_at,
+    );
+    let (exclusive, exclusive_revision) =
+        persist_synthetic_document(&store, "legacy-exclusive", requested_at);
+    let second_revision = SourceRevision::for_content(
+        exclusive.id.clone(),
+        ContentDigest::from_bytes(b"synthetic second retained hash"),
+        b"synthetic second retained hash".len() as u64,
+    );
+    store.insert_source_revision(&second_revision).unwrap();
+    observe(
+        &store,
+        &root_a.id,
+        &exclusive,
+        &exclusive_revision,
+        SCAN_A,
+        requested_at,
+    );
+
+    checkpoint::reset_snapshot_census_count();
+    let started = store
+        .begin_source_root_deletion_attempt(&root_a.id, reconciled_at)
+        .unwrap();
+    assert_eq!(checkpoint::snapshot_census_count(), 1);
+    assert_eq!(started.phase, SourceRootDeletionPhase::Quiescing);
+    assert_eq!(started.affected_documents, 1);
+    assert_eq!(started.attempt_count, 1);
+    assert_eq!(
+        deletion_transaction_witness(&store, &root_a.id).canonical_path,
+        ROOT_A
+    );
+    assert_eq!(
+        deletion_transaction_witness(&store, &root_a.id).checkpoint_protocol_version,
+        schema_v37::SNAPSHOT_INVARIANT_V2
+    );
+    assert_eq!(
+        deletion_snapshot_tuples(&store, &root_a.id),
+        vec![
+            (
+                exclusive.id.as_str().to_string(),
+                exclusive_revision.content_hash.as_str().to_string(),
+            ),
+            (
+                exclusive.id.as_str().to_string(),
+                second_revision.content_hash.as_str().to_string(),
+            ),
+        ]
+    );
+    assert!(store.document_by_id(&shared.id).unwrap().is_some());
+    assert!(store.document_by_id(&exclusive.id).unwrap().is_some());
+
+    let before_stable = total_changes(&store);
+    let stable = store
+        .begin_source_root_deletion_attempt(&root_a.id, stable_at)
+        .unwrap();
+    assert_eq!(total_changes(&store) - before_stable, 1);
+    assert_eq!(checkpoint::snapshot_census_count(), 1);
+    assert_eq!(stable.updated_at, started.updated_at);
+    assert_eq!(stable.attempt_count, 2);
+
+    let plan = store
+        .connection
+        .borrow()
+        .prepare(&format!(
+            "EXPLAIN QUERY PLAN {}",
+            checkpoint::ATTEMPT_ADMISSION_SQL
+        ))
+        .unwrap()
+        .query_map([root_a.id.as_str()], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+    let plan = plan.join("\n");
+    assert!(
+        plan.contains("source_root_deletion") && plan.contains("root_id=?"),
+        "{plan}"
+    );
+    assert!(!plan.contains("source_occurrence"), "{plan}");
+    assert!(!plan.contains("source_revision"), "{plan}");
+    assert!(!plan.contains("source_root_deletion_document"), "{plan}");
+
+    let (metadata_document, metadata_revision) =
+        persist_synthetic_document(&store, "legacy-metadata-only", requested_at);
+    observe(
+        &store,
+        &root_c.id,
+        &metadata_document,
+        &metadata_revision,
+        SCAN_C,
+        requested_at,
+    );
+    make_quiescing_receipt_legacy(
+        &store,
+        &root_c.id,
+        requested_at,
+        "/synthetic/stale-metadata-only",
+    );
+    let census_before_metadata = checkpoint::snapshot_census_count();
+    let metadata_before = total_changes(&store);
+    store
+        .begin_source_root_deletion_attempt(&root_c.id, reconciled_at)
+        .unwrap();
+    assert_eq!(total_changes(&store) - metadata_before, 2);
+    assert_eq!(
+        checkpoint::snapshot_census_count(),
+        census_before_metadata + 1
+    );
+    let census_after_metadata = checkpoint::snapshot_census_count();
+
+    store
+        .set_source_root_deletion_phase(&root_a.id, SourceRootDeletionPhase::Publishing, stable_at)
+        .unwrap();
+    store
+        .connection
+        .borrow()
+        .execute(
+            "UPDATE source_root_deletion SET checkpoint_protocol_version = ?2
+             WHERE root_id = ?1",
+            params![root_a.id.as_str(), schema_v37::LEGACY_OR_UNATTESTED],
+        )
+        .unwrap();
+    let later_before = total_changes(&store);
+    store
+        .begin_source_root_deletion_attempt(&root_a.id, stable_at)
+        .unwrap();
+    assert_eq!(total_changes(&store) - later_before, 1);
+    assert_eq!(checkpoint::snapshot_census_count(), census_after_metadata);
+    assert_eq!(
+        deletion_transaction_witness(&store, &root_a.id).checkpoint_protocol_version,
+        schema_v37::LEGACY_OR_UNATTESTED
+    );
+}
+
+#[test]
+fn legacy_quiescing_attempt_rolls_back_evidence_and_snapshot_on_receipt_failure() {
+    const ROOT: &str = "/synthetic/legacy-quiescing-rollback";
+    const SCAN: &str = "legacy-rollback-scan";
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let requested_at = UnixTimestamp::from_unix_seconds(1_800_304_000);
+    let attempted_at = UnixTimestamp::from_unix_seconds(1_800_304_001);
+    let root = register_scanned_root(&store, ROOT, "Legacy rollback", SCAN, requested_at);
+    let (document, revision) = persist_synthetic_document(&store, "legacy-rollback", requested_at);
+    observe(&store, &root.id, &document, &revision, SCAN, requested_at);
+    make_quiescing_receipt_legacy(&store, &root.id, requested_at, "/synthetic/stale-rollback");
+    let later_revision = SourceRevision::for_content(
+        document.id.clone(),
+        ContentDigest::from_bytes(b"synthetic rollback later hash"),
+        b"synthetic rollback later hash".len() as u64,
+    );
+    store.insert_source_revision(&later_revision).unwrap();
+    let before = deletion_transaction_witness(&store, &root.id);
+
+    store
+        .connection
+        .borrow()
+        .execute_batch(
+            "CREATE TEMP TRIGGER fail_legacy_checkpoint_receipt_update
+             BEFORE UPDATE OF checkpoint_protocol_version ON source_root_deletion
+             WHEN OLD.checkpoint_protocol_version = 1
+              AND NEW.checkpoint_protocol_version = 2
+             BEGIN
+               SELECT RAISE(ABORT, 'synthetic receipt update failure');
+             END;",
+        )
+        .unwrap();
+    let result = store.begin_source_root_deletion_attempt(&root.id, attempted_at);
+    store
+        .connection
+        .borrow()
+        .execute_batch("DROP TRIGGER fail_legacy_checkpoint_receipt_update;")
+        .unwrap();
+
+    assert_eq!(result.unwrap_err().class(), MetaStoreErrorClass::Storage);
+    assert_eq!(deletion_transaction_witness(&store, &root.id), before);
+    store
+        .begin_source_root_deletion_attempt(&root.id, attempted_at)
+        .unwrap();
+    assert_eq!(deletion_snapshot_tuples(&store, &root.id).len(), 2);
+    assert_eq!(
+        deletion_transaction_witness(&store, &root.id).checkpoint_protocol_version,
+        schema_v37::SNAPSHOT_INVARIANT_V2
+    );
 }
 
 #[test]

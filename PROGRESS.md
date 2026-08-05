@@ -1,5 +1,49 @@
 # Progress
 
+## Issue #443 one-time legacy Quiescing deletion reconciliation
+
+Issue #443 keeps `MetaStore::begin_source_root_deletion_attempt` as the sole
+public attempt authority. Its private `Immediate` transaction now admits an
+active receipt with one primary-key lookup and, only for a Quiescing receipt
+whose checkpoint marker is `1`, revalidates the root, receipt and sole evidence
+row before any census or write. It then refreshes attempt evidence, replaces a
+changed deletion snapshot, corrects canonical metadata and attests marker `2`
+atomically. Missing authority, partial completion or malformed evidence fails
+closed without changing evidence, snapshot or receipt state.
+
+The private checkpoint module owns one stable ordered
+`(document_id, content_hash)` tuple query and one tuple value. That value drives
+both exact persisted equality and replacement INSERTs; the writer does not
+re-query document or revision state. `affected_documents` remains the count of
+distinct document IDs, including when one document has multiple retained
+hashes. Requested checkpoint creation and legacy Quiescing reconciliation reuse
+the same query, representation and writer, so no second snapshot owner or
+public API was added.
+
+Synthetic tests prove the one-time boundary. A formerly exclusive document X
+that becomes shared is removed, a newly exclusive document Y with two hashes is
+captured with affected count one, canonical metadata is repaired, and the next
+marker-2 retry performs no census and changes exactly the one evidence row. A
+metadata-only repair changes evidence plus receipt without snapshot DML, while
+a marker-1 Publishing receipt retains the existing later-phase behavior. A
+test-local TEMP trigger then forces the receipt attestation to fail after the
+evidence and snapshot writes; the complete evidence row, snapshot and all
+receipt fields roll back byte-for-byte before a clean retry succeeds.
+
+Focused reconciliation and rollback tests, all 179 meta-store unit tests plus
+integration and doc tests, the existing daemon restart-recovery test,
+warnings-denied Clippy for meta-store and daemon, and workspace formatting pass.
+The daemon test used only the repository's verified atomic staging owner for
+the ignored four-file PDFium build pack; no cache entered git. Stable retries
+remain O(1) admission plus one evidence update. Only the one-time legacy path
+allocates O(D_root + H_root) tuples and writes O(S + H) snapshot/receipt WAL;
+there is no new thread, queue, polling, IPC, index or durable growth.
+
+This slice does not undo watcher, task, OCR or ingest-job side effects from an
+earlier Quiescing attempt. It only re-attests the snapshot before the next
+publication or purge attempt, and it does not solve checkpoint-after mutation
+TOCTOU, Publishing-and-later reconciliation or root epoch fencing.
+
 ## Issue #440 durable source-root deletion checkpoint protocol
 
 Issue #440 advances metadata to schema v37 and adds one
