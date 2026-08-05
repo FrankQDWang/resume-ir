@@ -10,13 +10,36 @@ use crate::{
     active_store_manifest::{
         sync_parent_directory, validate_owner_regular_metadata, ActiveStoreManifest,
     },
-    schema_v35, MetaStoreError, Result,
+    schema_v35, schema_v36, MetaStoreError, Result,
 };
 
 pub(super) const FILE_NAME: &str = "metadata-initialization-receipt.v1";
 const SCHEMA: &str = "resume-ir.metadata-initialization-receipt.v1";
 const MAX_BYTES: u64 = 1024;
-const STAGING_PREFIX: &str = ".metadata-v35-init-";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum InitializationGeneration {
+    V35,
+    V36,
+}
+
+impl InitializationGeneration {
+    pub(super) const RECOVERABLE: [Self; 2] = [Self::V35, Self::V36];
+
+    fn schema_version(self) -> u32 {
+        match self {
+            Self::V35 => schema_v35::VERSION,
+            Self::V36 => schema_v36::VERSION,
+        }
+    }
+
+    fn staging_prefix(self) -> &'static str {
+        match self {
+            Self::V35 => ".metadata-v35-init-",
+            Self::V36 => ".metadata-v36-init-",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum InitializationPhase {
@@ -44,12 +67,20 @@ impl InitializationReceipt {
         self.phase
     }
 
-    pub(super) fn staging_file(&self) -> String {
-        format!("{STAGING_PREFIX}{}.sqlite3", &self.initialization_id[..16])
+    pub(super) fn staging_file(&self, generation: InitializationGeneration) -> String {
+        format!(
+            "{}{}.sqlite3",
+            generation.staging_prefix(),
+            &self.initialization_id[..16]
+        )
     }
 
-    pub(super) fn target_file(&self) -> String {
-        format!("metadata-v35-{}.sqlite3", &self.initialization_id[..16])
+    pub(super) fn target_file(&self, generation: InitializationGeneration) -> String {
+        format!(
+            "metadata-v{}-{}.sqlite3",
+            generation.schema_version(),
+            &self.initialization_id[..16]
+        )
     }
 
     pub(super) fn mark_ready(&mut self, store_id_digest: String) {
@@ -57,12 +88,15 @@ impl InitializationReceipt {
         self.store_id_digest = Some(store_id_digest);
     }
 
-    pub(super) fn target_manifest(&self) -> Option<ActiveStoreManifest> {
+    pub(super) fn target_manifest(
+        &self,
+        generation: InitializationGeneration,
+    ) -> Option<ActiveStoreManifest> {
         self.store_id_digest
             .as_ref()
             .map(|store_id_digest| ActiveStoreManifest {
-                file_name: self.target_file(),
-                schema_version: schema_v35::VERSION,
+                file_name: self.target_file(generation),
+                schema_version: generation.schema_version(),
                 store_id_digest: store_id_digest.clone(),
             })
     }

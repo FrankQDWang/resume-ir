@@ -359,16 +359,60 @@ test("slow initialization and every missing optional runtime require exact matri
   }
 });
 
-test("diagnostics v9 validates exact health and privacy matrices", () => {
-  assert.equal(validateDaemonDiagnostics(diagnostics()).schema_version, "resume-ir.diagnostics.v9");
+test("diagnostics v11 validates exact health privacy and deletion-attempt matrices", () => {
+  assert.equal(validateDaemonDiagnostics(diagnostics()).schema_version, "resume-ir.diagnostics.v11");
   assert.throws(
-    () => validateDaemonDiagnostics(diagnostics({ schema_version: "resume-ir.diagnostics.v3" })),
+    () => validateDaemonDiagnostics(diagnostics({ schema_version: "resume-ir.diagnostics.v10" })),
     /diagnostics_contract_invalid/,
   );
   assert.throws(
     () => validateDaemonDiagnostics(diagnostics({ contains_queries: true })),
     /diagnostics_contract_invalid/,
   );
+  const missingAttemptEvidence = diagnostics();
+  delete missingAttemptEvidence.source_root_deletion_attempts;
+  assert.throws(
+    () => validateDaemonDiagnostics(missingAttemptEvidence),
+    /diagnostics_contract_invalid/,
+  );
+  assert.equal(validateDaemonDiagnostics(diagnostics({
+    source_root_deletion_attempts: [{
+      phase: "quiescing",
+      attempt_count: 2,
+      last_attempt_at: 1_800_300_301,
+      last_error_phase: "quiescing",
+      last_error_code: "ocr_quiescence_timeout",
+      last_error_at: 1_800_300_302,
+    }],
+  })).source_root_deletion_attempts.length, 1);
+  assert.throws(
+    () => validateDaemonDiagnostics(diagnostics({
+      source_root_deletion_attempts: [{
+        phase: "complete",
+        attempt_count: 2,
+        last_attempt_at: 1_800_300_301,
+        last_error_phase: null,
+        last_error_code: null,
+        last_error_at: null,
+      }],
+    })),
+    /diagnostics_contract_invalid/,
+  );
+  for (const retiredCode of ["receipt_unavailable", "service_unavailable"]) {
+    assert.throws(
+      () => validateDaemonDiagnostics(diagnostics({
+        source_root_deletion_attempts: [{
+          phase: "quiescing",
+          attempt_count: 2,
+          last_attempt_at: 1_800_300_301,
+          last_error_phase: "quiescing",
+          last_error_code: retiredCode,
+          last_error_at: 1_800_300_302,
+        }],
+      })),
+      /diagnostics_contract_invalid/,
+    );
+  }
   const retry = retryStatus("fulltext", 1);
   assert.equal(
     validateDaemonDiagnostics(diagnostics({

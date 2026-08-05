@@ -16,6 +16,8 @@ mod enums {
     snake_enum!(pub(super) enum EvidenceStatus { Unaccepted });
     snake_enum!(pub(super) enum ScanErrorClass { PermissionDenied, SourceUnavailable, LockedOrUnreadable, Io });
     snake_enum!(pub(super) enum ScanErrorOperation { NormalizePath, ReadDirectory, ReadMetadata, Fingerprint });
+    snake_enum!(pub(super) enum SourceRootDeletionPhase { Requested, Quiescing, Publishing, Purging, Verifying });
+    snake_enum!(pub(super) enum SourceRootDeletionErrorCode { ImportQuiescenceTimeout, OcrQuiescenceTimeout, PublicationFailed, MetadataPurgeFailed, PrivacyCleanupFailed, ReceiptCompletionFailed, Internal });
     snake_enum!(pub(super) enum DetailFieldType { Name, Email, Phone, Wechat, School, SchoolTier, Degree, Major, Company, Title, Education, Skills, Skill, Certificate, Date, DateRange, YearsExperience, Location, Other });
     snake_enum!(pub(super) enum CancelStatus { Cancelled, CancelRequested, Complete });
     snake_enum!(#[derive(PartialEq, Eq)] pub(super) enum SearchStatus { Ok, Cancelled });

@@ -97,7 +97,7 @@ function runningLifecycle(): DaemonLifecycleSnapshot {
 function diagnostics(): DiagnosticsBody {
   const status = readyStatus()
   return {
-    schema_version: "resume-ir.diagnostics.v10",
+    schema_version: "resume-ir.diagnostics.v11",
     privacy_boundary: "redacted_local_aggregate",
     evidence_lane: "gui_manual",
     evidence_status: "unaccepted",
@@ -114,6 +114,7 @@ function diagnostics(): DiagnosticsBody {
     capabilities: status.capabilities,
     repair_progress: null,
     error: null,
+    source_root_deletion_attempts: [],
     metrics: {
       ipc: status.ipc,
       indexed_documents: 4,
@@ -283,11 +284,29 @@ describe("strict control-plane contracts", () => {
     await expect(readStatus()).rejects.toMatchObject({ code: "daemon_contract" })
   })
 
-  it("accepts diagnostics v5 and rejects privacy or version drift", async () => {
+  it("accepts bounded deletion attempt evidence and rejects diagnostics drift", async () => {
     const body = diagnostics()
+    body.source_root_deletion_attempts = [{
+      phase: "quiescing",
+      attempt_count: 2,
+      last_attempt_at: 1_800_300_301,
+      last_error_phase: "quiescing",
+      last_error_code: "ocr_quiescence_timeout",
+      last_error_at: 1_800_300_302,
+    }]
     mockReply({ http_status: 200, body })
     await expect(readDiagnostics()).resolves.toEqual({ http_status: 200, body })
 
+    const invalidAttempt = structuredClone(body) as unknown as { source_root_deletion_attempts: Array<Record<string, unknown>> }
+    invalidAttempt.source_root_deletion_attempts[0].phase = "complete"
+    mockReply({ http_status: 200, body: invalidAttempt })
+    await expect(readDiagnostics()).rejects.toMatchObject({ code: "daemon_contract" })
+    invalidAttempt.source_root_deletion_attempts[0].phase = "quiescing"
+    for (const retiredCode of ["receipt_unavailable", "service_unavailable"]) {
+      invalidAttempt.source_root_deletion_attempts[0].last_error_code = retiredCode
+      mockReply({ http_status: 200, body: invalidAttempt })
+      await expect(readDiagnostics()).rejects.toMatchObject({ code: "daemon_contract" })
+    }
     mockReply({ http_status: 200, body: { ...body, schema_version: "resume-ir.diagnostics.v3" } })
     await expect(readDiagnostics()).rejects.toMatchObject({ code: "daemon_contract" })
     mockReply({ http_status: 200, body: { ...body, contains_queries: true } })

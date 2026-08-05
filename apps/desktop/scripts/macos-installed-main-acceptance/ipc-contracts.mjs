@@ -296,29 +296,60 @@ function validRuntime(runtime) {
         ["missing", "invalid", "start_failed", "not_configured"].includes(runtime.reason)));
 }
 
+function validWriter(writer) {
+  if (!exactKeys(writer, ["state", "reason", "transition_phase", "transition_id"])) return false;
+  const transitionPhases = [
+    "observed", "claims_fenced", "workers_quiesced", "target_committed", "writer_ready",
+  ];
+  const transitionId = writer.transition_id;
+  const validTransitionId = transitionId === null ||
+    (typeof transitionId === "string" && transitionId.length > 0);
+  if (!validTransitionId) return false;
+  if (writer.state === "ready") {
+    return writer.reason === null &&
+      ((writer.transition_phase === null && transitionId === null) ||
+        (writer.transition_phase === "writer_ready" && transitionId !== null));
+  }
+  if (writer.state === "transitioning") {
+    return ["transition_in_progress", "blocked_by_running_owner"].includes(writer.reason) &&
+      transitionPhases.includes(writer.transition_phase);
+  }
+  return ["unavailable", "blocked"].includes(writer.state) &&
+    ["runtime_unavailable", "unsupported_transition", "persisted_state_invalid",
+      "blocked_by_running_owner", "transition_in_progress"].includes(writer.reason) &&
+    writer.transition_phase === null && transitionId === null;
+}
+
 function validCapability(capability) {
   return exactKeys(capability, ["state", "reason"]) &&
     ((capability.state === "available" && capability.reason === null) ||
       (capability.state === "initializing" && capability.reason === "core_initializing") ||
       (["degraded", "unavailable", "blocked"].includes(capability.state) &&
         ["core_blocked", "embedding_unavailable", "ocr_unavailable",
-          "classifier_unavailable", "pdfium_unavailable"].includes(capability.reason)));
+          "classifier_unavailable", "pdfium_unavailable", "writer_unavailable",
+          "writer_transitioning"].includes(capability.reason)));
 }
 
-function validHealth(value) {
+function validHealth(value, requireWriter = false) {
   return value.process_state === "ready" && validCore(value.core) &&
     exactKeys(value.optional_runtimes, RUNTIME_NAMES) &&
     RUNTIME_NAMES.every((name) => validRuntime(value.optional_runtimes[name])) &&
+    (!requireWriter || validWriter(value.writer)) &&
     exactKeys(value.capabilities, CAPABILITY_NAMES) &&
     CAPABILITY_NAMES.every((name) => validCapability(value.capabilities[name])) &&
-    capabilityMatrixMatches(value.core, value.optional_runtimes, value.capabilities);
+    capabilityMatrixMatches(
+      value.core,
+      value.optional_runtimes,
+      requireWriter ? value.writer : null,
+      value.capabilities,
+    );
 }
 
 function capabilityIs(value, state, reason) {
   return value.state === state && value.reason === reason;
 }
 
-function capabilityMatrixMatches(core, runtimes, capabilities) {
+function capabilityMatrixMatches(core, runtimes, writer, capabilities) {
   if (["initializing", "migrating", "repairing"].includes(core.state)) {
     return CAPABILITY_NAMES.every((name) =>
       capabilityIs(capabilities[name], "initializing", "core_initializing"));
@@ -333,26 +364,55 @@ function capabilityMatrixMatches(core, runtimes, capabilities) {
   const classifier = runtimes.classifier.state === "available";
   const ocr = runtimes.ocr.state === "available";
   const pdfium = runtimes.pdfium.state === "available";
+  const writerReady = writer === null || writer.state === "ready";
+  const writerReason = writer?.state === "transitioning" ?
+    "writer_transitioning" : "writer_unavailable";
+  const writerGate = (capability, state, reason) => writerReady ?
+    capabilityIs(capability, state, reason) :
+    capabilityIs(capability, "blocked", writerReason);
   return capabilityIs(capabilities.semantic_search,
     embedding ? "available" : "unavailable",
     embedding ? null : "embedding_unavailable") &&
     capabilityIs(capabilities.hybrid_search,
       embedding ? "available" : "degraded",
       embedding ? null : "embedding_unavailable") &&
-    capabilityIs(capabilities.text_import,
+    writerGate(capabilities.text_import,
       classifier && embedding ? "available" : "unavailable",
       !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : null) &&
-    capabilityIs(capabilities.pdf_import,
+    writerGate(capabilities.pdf_import,
       classifier && embedding && pdfium ? "available" : "unavailable",
       !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" :
         !pdfium ? "pdfium_unavailable" : null) &&
-    capabilityIs(capabilities.ocr_import,
+    writerGate(capabilities.ocr_import,
       classifier && embedding && pdfium && ocr ? "available" : "unavailable",
       !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" :
         !pdfium ? "pdfium_unavailable" : !ocr ? "ocr_unavailable" : null) &&
-    capabilityIs(capabilities.index_publication,
+    writerGate(capabilities.index_publication,
       classifier && embedding ? "available" : "unavailable",
       !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : null);
+}
+
+function validSourceRootDeletionAttempts(value) {
+  if (!Array.isArray(value) || value.length > 16) return false;
+  const phases = ["requested", "quiescing", "publishing", "purging", "verifying"];
+  const errorCodes = [
+    "import_quiescence_timeout", "ocr_quiescence_timeout", "publication_failed",
+    "metadata_purge_failed", "privacy_cleanup_failed", "receipt_completion_failed", "internal",
+  ];
+  return value.every((attempt) => {
+    if (!exactKeys(attempt, [
+      "phase", "attempt_count", "last_attempt_at", "last_error_phase",
+      "last_error_code", "last_error_at",
+    ]) || !phases.includes(attempt.phase) || !boundedCount(attempt.attempt_count) ||
+      attempt.attempt_count === 0 || !boundedCount(attempt.last_attempt_at)) return false;
+    const errorFields = [
+      attempt.last_error_phase, attempt.last_error_code, attempt.last_error_at,
+    ];
+    if (errorFields.every((field) => field === null)) return true;
+    return phases.includes(attempt.last_error_phase) &&
+      errorCodes.includes(attempt.last_error_code) && boundedCount(attempt.last_error_at) &&
+      attempt.last_error_at >= attempt.last_attempt_at;
+  });
 }
 
 function validServiceError(error, core) {
@@ -517,14 +577,15 @@ export function validateDaemonDiagnostics(
       "schema_version", "privacy_boundary", "contains_raw_resume_text",
       "contains_queries", "contains_resume_paths", "contains_candidate_results",
       "contains_snippet_text", "visible_epoch", "evidence_lane", "evidence_status",
-      "process_state", "core", "optional_runtimes", "capabilities",
-      "repair_progress", "error", "metrics", "error_counts", "benchmark_refs",
-    ]) || value.schema_version !== "resume-ir.diagnostics.v9" ||
+      "process_state", "core", "optional_runtimes", "writer", "capabilities",
+      "repair_progress", "error", "metrics", "error_counts",
+      "source_root_deletion_attempts", "benchmark_refs",
+    ]) || value.schema_version !== "resume-ir.diagnostics.v11" ||
     value.privacy_boundary !== "redacted_local_aggregate" ||
     [value.contains_raw_resume_text, value.contains_queries, value.contains_resume_paths,
       value.contains_candidate_results, value.contains_snippet_text].some(Boolean) ||
     value.evidence_lane !== "gui_manual" || value.evidence_status !== "unaccepted" ||
-    !boundedCount(value.visible_epoch) || !validHealth(value) ||
+    !boundedCount(value.visible_epoch) || !validHealth(value, true) ||
     !validServiceError(value.error, value.core) ||
     !validRepairProgress(value.repair_progress, value.core.state) ||
     !diagnosticsPhaseValid(value, expected) || !exactKeys(value.metrics, metricsKeys) ||
@@ -548,6 +609,7 @@ export function validateDaemonDiagnostics(
       ["permission_denied", "source_unavailable", "locked_or_unreadable", "io"].includes(bucket.class) &&
       ["normalize_path", "read_directory", "read_metadata", "fingerprint"].includes(bucket.operation) &&
       boundedCount(bucket.count)) ||
+    !validSourceRootDeletionAttempts(value.source_root_deletion_attempts) ||
     !Array.isArray(value.benchmark_refs) || value.benchmark_refs.length !== 0
   ) {
     fail("diagnostics_contract_invalid");

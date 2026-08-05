@@ -67,13 +67,32 @@ export function isDiagnosticsBody(value: unknown): value is DiagnosticsBody {
     "schema_version", "privacy_boundary", "contains_raw_resume_text", "contains_queries", "contains_resume_paths",
     "contains_candidate_results", "contains_snippet_text", "visible_epoch", "evidence_lane", "evidence_status",
     "process_state", "core", "optional_runtimes", "writer", "capabilities", "repair_progress", "error", "metrics", "error_counts",
+    "source_root_deletion_attempts",
   ])) return false
-  if (value.schema_version !== "resume-ir.diagnostics.v10" || value.privacy_boundary !== "redacted_local_aggregate" || value.evidence_lane !== "gui_manual" || value.evidence_status !== "unaccepted" || value.process_state !== "ready") return false
+  if (value.schema_version !== "resume-ir.diagnostics.v11" || value.privacy_boundary !== "redacted_local_aggregate" || value.evidence_lane !== "gui_manual" || value.evidence_status !== "unaccepted" || value.process_state !== "ready") return false
   if (![value.contains_raw_resume_text, value.contains_queries, value.contains_resume_paths, value.contains_candidate_results, value.contains_snippet_text].every((flag) => flag === false)) return false
   if (!nullableSafeCount(value.visible_epoch) || !isCore(value.core) || !isRuntimes(value.optional_runtimes) || !isWriter(value.writer) || !isCapabilities(value.capabilities)) return false
   if (!capabilityMatrixMatches(value.core, value.optional_runtimes, value.writer, value.capabilities) || !isServiceError(value.error, value.core) || !isRepairProgress(value.repair_progress, value.core.state)) return false
   return isDiagnosticsMetrics(value.metrics, value.visible_epoch !== null)
     && isDiagnosticsErrors(value.error_counts, value.visible_epoch !== null)
+    && isSourceRootDeletionAttempts(value.source_root_deletion_attempts, value.visible_epoch !== null)
+}
+
+function isSourceRootDeletionAttempts(value: unknown, storeReady: boolean): boolean {
+  if (!storeReady) return value === null
+  if (!Array.isArray(value) || value.length > 16) return false
+  const phases = ["requested", "quiescing", "publishing", "purging", "verifying"]
+  const errorCodes = ["import_quiescence_timeout", "ocr_quiescence_timeout", "publication_failed", "metadata_purge_failed", "privacy_cleanup_failed", "receipt_completion_failed", "internal"]
+  return value.every((attempt) => {
+    if (!isRecord(attempt) || !hasExactKeys(attempt, ["phase", "attempt_count", "last_attempt_at", "last_error_phase", "last_error_code", "last_error_at"])) return false
+    if (!phases.includes(String(attempt.phase)) || !safeCount(attempt.attempt_count) || Number(attempt.attempt_count) === 0 || !safeCount(attempt.last_attempt_at)) return false
+    const errorPresent = attempt.last_error_phase !== null || attempt.last_error_code !== null || attempt.last_error_at !== null
+    if (!errorPresent) return attempt.last_error_phase === null && attempt.last_error_code === null && attempt.last_error_at === null
+    return phases.includes(String(attempt.last_error_phase))
+      && errorCodes.includes(String(attempt.last_error_code))
+      && safeCount(attempt.last_error_at)
+      && Number(attempt.last_error_at) >= Number(attempt.last_attempt_at)
+  })
 }
 
 function isCore(value: unknown): value is StatusBody["core"] {

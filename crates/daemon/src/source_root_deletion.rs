@@ -9,8 +9,8 @@ use import_pipeline::{
     SearchProjectionRemoval, SearchProjectionRemovalReason, SearchPublicationVectorization,
 };
 use meta_store::{
-    ImportProcessingContract, OwnedMetaStore, SourceRootDeletion, SourceRootDeletionPhase,
-    SourceRootId, SourceWatcherState,
+    ImportProcessingContract, OwnedMetaStore, SourceRootDeletion, SourceRootDeletionErrorCode,
+    SourceRootDeletionPhase, SourceRootId, SourceWatcherState,
 };
 
 use crate::command_failure::CommandFailure;
@@ -18,6 +18,27 @@ use crate::import_command::{RootControlAction, RootControlCommand};
 
 pub(crate) struct DeletionRequest {
     pub(crate) receipt: SourceRootDeletion,
+}
+
+struct DeletionAttemptFailure {
+    code: SourceRootDeletionErrorCode,
+    transport: CommandFailure,
+}
+
+impl DeletionAttemptFailure {
+    fn internal(code: SourceRootDeletionErrorCode) -> Self {
+        Self {
+            code,
+            transport: CommandFailure::Internal,
+        }
+    }
+
+    fn unavailable(code: SourceRootDeletionErrorCode, message: &'static str) -> Self {
+        Self {
+            code,
+            transport: CommandFailure::ServiceUnavailable(message),
+        }
+    }
 }
 
 const RETRY_DELAYS: [Duration; 5] = [
@@ -101,7 +122,7 @@ pub(crate) fn spawn_worker(
         .spawn(move || {
             let _registration = registration;
             drive_worker_until_complete(
-                || resume(&data_dir, &store, &processing_contract, &root_id).map(|_| ()),
+                || attempt_resume(&data_dir, &store, &processing_contract, &root_id).map(|_| ()),
                 thread::sleep,
             );
         })
@@ -156,9 +177,41 @@ pub(crate) fn resume_pending(
         let Some(_registration) = WorkerRegistration::acquire(&receipt.root_id)? else {
             continue;
         };
-        resume(data_dir, store, processing_contract, &receipt.root_id)?;
+        attempt_resume(data_dir, store, processing_contract, &receipt.root_id)?;
     }
     Ok(pending.len())
+}
+
+fn attempt_resume(
+    data_dir: &Path,
+    store: &OwnedMetaStore,
+    processing_contract: &ImportProcessingContract,
+    root_id: &SourceRootId,
+) -> Result<SourceRootDeletion, CommandFailure> {
+    let now = crate::current_timestamp().map_err(|_| CommandFailure::Internal)?;
+    store
+        .begin_source_root_deletion_attempt(root_id, now)
+        .map_err(|_| CommandFailure::Internal)?;
+    match resume(data_dir, store, processing_contract, root_id) {
+        Ok(receipt) => Ok(receipt),
+        Err(failure) => {
+            let phase = store
+                .source_root_deletion(root_id)
+                .map_err(|_| CommandFailure::Internal)?
+                .ok_or(CommandFailure::Internal)?
+                .phase;
+            let failed_at = crate::current_timestamp().map_err(|_| CommandFailure::Internal)?;
+            store
+                .record_source_root_deletion_attempt_failure(
+                    root_id,
+                    phase,
+                    failure.code,
+                    failed_at,
+                )
+                .map_err(|_| CommandFailure::Internal)?;
+            Err(failure.transport)
+        }
+    }
 }
 
 fn resume(
@@ -166,31 +219,30 @@ fn resume(
     store: &OwnedMetaStore,
     processing_contract: &ImportProcessingContract,
     root_id: &SourceRootId,
-) -> Result<SourceRootDeletion, CommandFailure> {
+) -> Result<SourceRootDeletion, DeletionAttemptFailure> {
     let receipt = store
         .source_root_deletion(root_id)
-        .map_err(|_| CommandFailure::Internal)?
-        .ok_or(CommandFailure::NotFound(
-            "source root deletion was not found",
-        ))?;
+        .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?
+        .ok_or_else(|| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
     if matches!(
         receipt.phase,
         SourceRootDeletionPhase::Complete | SourceRootDeletionPhase::Failed
     ) {
         return Ok(receipt);
     }
-    let now = crate::current_timestamp().map_err(|_| CommandFailure::Internal)?;
+    let now = crate::current_timestamp()
+        .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
     let mut phase = receipt.phase;
     if phase == SourceRootDeletionPhase::Requested {
         store
             .set_source_root_deletion_phase(root_id, SourceRootDeletionPhase::Quiescing, now)
-            .map_err(|_| CommandFailure::Internal)?;
+            .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
         phase = SourceRootDeletionPhase::Quiescing;
     }
     let task_owners = if phase != SourceRootDeletionPhase::Verifying {
         store
             .source_root(root_id)
-            .map_err(|_| CommandFailure::Internal)?
+            .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?
     } else {
         None
     }
@@ -205,7 +257,7 @@ fn resume(
         );
         store
             .set_source_root_state(root_id, root.state, SourceWatcherState::Paused, now)
-            .map_err(|_| CommandFailure::Internal)?;
+            .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
         acquire_root_task_quiescence(data_dir, store, &root.canonical_path, now)
     })
     .transpose()?
@@ -214,36 +266,38 @@ fn resume(
     if phase == SourceRootDeletionPhase::Quiescing {
         let documents = store
             .source_root_deletion_document_ids(root_id)
-            .map_err(|_| CommandFailure::Internal)?;
+            .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
         if !crate::ocr_worker::cancel_and_wait_for_documents_to_quiesce(
             &documents,
             Duration::from_secs(5),
         ) {
-            return Err(CommandFailure::ServiceUnavailable(
+            return Err(DeletionAttemptFailure::unavailable(
+                SourceRootDeletionErrorCode::OcrQuiescenceTimeout,
                 "source root OCR is quiescing",
             ));
         }
         store
             .purge_ingest_jobs_for_documents(&documents)
-            .map_err(|_| CommandFailure::Internal)?;
+            .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
         if !crate::ocr_worker::cancel_and_wait_for_documents_to_quiesce(
             &documents,
             Duration::from_secs(5),
         ) {
-            return Err(CommandFailure::ServiceUnavailable(
+            return Err(DeletionAttemptFailure::unavailable(
+                SourceRootDeletionErrorCode::OcrQuiescenceTimeout,
                 "source root OCR is quiescing",
             ));
         }
         store
             .set_source_root_deletion_phase(root_id, SourceRootDeletionPhase::Publishing, now)
-            .map_err(|_| CommandFailure::Internal)?;
+            .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
         phase = SourceRootDeletionPhase::Publishing;
     }
     if phase == SourceRootDeletionPhase::Publishing {
         publish_root_removal(store, root_id, now)?;
         store
             .set_source_root_deletion_phase(root_id, SourceRootDeletionPhase::Purging, now)
-            .map_err(|_| CommandFailure::Internal)?;
+            .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
         phase = SourceRootDeletionPhase::Purging;
     }
     if phase == SourceRootDeletionPhase::Purging {
@@ -251,13 +305,19 @@ fn resume(
         phase = SourceRootDeletionPhase::Verifying;
     }
     if phase != SourceRootDeletionPhase::Verifying {
-        return Err(CommandFailure::Internal);
+        return Err(DeletionAttemptFailure::internal(
+            SourceRootDeletionErrorCode::Internal,
+        ));
     }
-    finish_root_data_cleanup(store, root_id)
-        .map_err(|_| CommandFailure::ServiceUnavailable("privacy_cleanup"))?;
+    finish_root_data_cleanup(store, root_id)?;
     let receipt = store
         .complete_source_root_deletion(root_id, now)
-        .map_err(|_| CommandFailure::ServiceUnavailable("receipt_completion"))?;
+        .map_err(|_| {
+            DeletionAttemptFailure::unavailable(
+                SourceRootDeletionErrorCode::ReceiptCompletionFailed,
+                "receipt_completion",
+            )
+        })?;
     drop(task_owners);
     Ok(receipt)
 }
@@ -266,10 +326,12 @@ fn publish_root_removal(
     store: &OwnedMetaStore,
     root_id: &SourceRootId,
     now: meta_store::UnixTimestamp,
-) -> Result<(), CommandFailure> {
+) -> Result<(), DeletionAttemptFailure> {
     let documents = store
         .source_root_deletion_document_ids(root_id)
-        .map_err(|_| CommandFailure::Internal)?;
+        .map_err(|_| {
+            DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::PublicationFailed)
+        })?;
     let removals = documents
         .iter()
         .cloned()
@@ -285,11 +347,15 @@ fn publish_root_removal(
             now,
             &SearchPublicationVectorization::default(),
         )
-        .map_err(|_| CommandFailure::Internal)?;
+        .map_err(|_| {
+            DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::PublicationFailed)
+        })?;
     }
     store
         .purge_import_tasks_for_deleted_documents(&documents)
-        .map_err(|_| CommandFailure::Internal)?;
+        .map_err(|_| {
+            DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::PublicationFailed)
+        })?;
     Ok(())
 }
 
@@ -297,15 +363,17 @@ fn purge_root_data(
     store: &OwnedMetaStore,
     root_id: &SourceRootId,
     now: meta_store::UnixTimestamp,
-) -> Result<(), CommandFailure> {
+) -> Result<(), DeletionAttemptFailure> {
     if store
         .source_root(root_id)
-        .map_err(|_| CommandFailure::Internal)?
+        .map_err(|_| {
+            DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::MetadataPurgeFailed)
+        })?
         .is_some()
     {
-        store
-            .purge_source_root_data(root_id, now)
-            .map_err(|_| CommandFailure::Internal)?;
+        store.purge_source_root_data(root_id, now).map_err(|_| {
+            DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::MetadataPurgeFailed)
+        })?;
     }
     Ok(())
 }
@@ -313,24 +381,44 @@ fn purge_root_data(
 fn finish_root_data_cleanup(
     store: &OwnedMetaStore,
     root_id: &SourceRootId,
-) -> Result<(), CommandFailure> {
+) -> Result<(), DeletionAttemptFailure> {
     let unreferenced_content_hashes = store
         .source_root_unreferenced_content_hashes(root_id)
-        .map_err(|_| CommandFailure::Internal)?;
+        .map_err(|_| {
+            DeletionAttemptFailure::unavailable(
+                SourceRootDeletionErrorCode::PrivacyCleanupFailed,
+                "privacy_cleanup",
+            )
+        })?;
     store
         .purge_ocr_page_cache_by_content_hashes(&unreferenced_content_hashes)
-        .map_err(|_| CommandFailure::Internal)?;
+        .map_err(|_| {
+            DeletionAttemptFailure::unavailable(
+                SourceRootDeletionErrorCode::PrivacyCleanupFailed,
+                "privacy_cleanup",
+            )
+        })?;
     loop {
         let report = store
             .purge_source_root_deleted_documents(root_id)
-            .map_err(|_| CommandFailure::Internal)?;
+            .map_err(|_| {
+                DeletionAttemptFailure::unavailable(
+                    SourceRootDeletionErrorCode::PrivacyCleanupFailed,
+                    "privacy_cleanup",
+                )
+            })?;
         if report.remaining_tombstones == 0 {
             break;
         }
     }
     store
         .destroy_retained_migration_predecessor()
-        .map_err(|_| CommandFailure::Internal)?;
+        .map_err(|_| {
+            DeletionAttemptFailure::unavailable(
+                SourceRootDeletionErrorCode::PrivacyCleanupFailed,
+                "privacy_cleanup",
+            )
+        })?;
     Ok(())
 }
 
@@ -339,13 +427,13 @@ fn acquire_root_task_quiescence(
     store: &OwnedMetaStore,
     canonical_root_path: &str,
     now: meta_store::UnixTimestamp,
-) -> Result<Vec<ImportTaskOwnerLock>, CommandFailure> {
+) -> Result<Vec<ImportTaskOwnerLock>, DeletionAttemptFailure> {
     const QUIESCE_TIMEOUT: Duration = Duration::from_secs(5);
     const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
     let tasks = store
         .active_import_tasks_for_root_quiescence(canonical_root_path)
-        .map_err(|_| CommandFailure::Internal)?;
+        .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
     let mut owners = Vec::with_capacity(tasks.len());
     let deadline = Instant::now() + QUIESCE_TIMEOUT;
     for task in tasks {
@@ -354,7 +442,7 @@ fn acquire_root_task_quiescence(
         );
         store
             .cancel_import_task(&task.id, cancel_at)
-            .map_err(|_| CommandFailure::Internal)?;
+            .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
         loop {
             match ImportTaskOwnerLock::try_acquire(data_dir, &task.id) {
                 Ok(Some(owner)) => {
@@ -363,11 +451,16 @@ fn acquire_root_task_quiescence(
                 }
                 Ok(None) if Instant::now() < deadline => thread::sleep(POLL_INTERVAL),
                 Ok(None) => {
-                    return Err(CommandFailure::ServiceUnavailable(
+                    return Err(DeletionAttemptFailure::unavailable(
+                        SourceRootDeletionErrorCode::ImportQuiescenceTimeout,
                         "source root deletion is quiescing",
                     ));
                 }
-                Err(_) => return Err(CommandFailure::Internal),
+                Err(_) => {
+                    return Err(DeletionAttemptFailure::internal(
+                        SourceRootDeletionErrorCode::Internal,
+                    ));
+                }
             }
         }
     }
@@ -381,12 +474,13 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use meta_store::{
-        DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, SourceRootDeletionPhase,
-        UnixTimestamp,
+        DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, SourceRootDeletionErrorCode,
+        SourceRootDeletionPhase, UnixTimestamp,
     };
 
-    use super::drive_worker_until_complete;
-    use super::{resume_pending, WorkerRegistration};
+    use super::{
+        drive_worker_until_complete, resume_pending, DeletionAttemptFailure, WorkerRegistration,
+    };
     use crate::command_failure::CommandFailure;
 
     #[test]
@@ -407,6 +501,27 @@ mod tests {
         assert_eq!(attempts.get(), 7);
         let expected_ms = [250, 1_000, 4_000, 15_000, 30_000, 30_000];
         assert_eq!(delays, expected_ms.map(Duration::from_millis));
+    }
+
+    #[test]
+    fn deletion_failure_cause_is_typed_independently_from_transport_copy() {
+        let failure = DeletionAttemptFailure::unavailable(
+            SourceRootDeletionErrorCode::OcrQuiescenceTimeout,
+            "changed transport copy",
+        );
+
+        assert_eq!(
+            failure.code,
+            SourceRootDeletionErrorCode::OcrQuiescenceTimeout
+        );
+        assert!(matches!(
+            failure.transport,
+            CommandFailure::ServiceUnavailable("changed transport copy")
+        ));
+        assert_eq!(
+            DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::PublicationFailed).code,
+            SourceRootDeletionErrorCode::PublicationFailed
+        );
     }
 
     #[test]

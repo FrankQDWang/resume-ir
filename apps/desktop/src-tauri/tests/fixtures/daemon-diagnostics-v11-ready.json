@@ -1,5 +1,5 @@
 {
-  "schema_version": "resume-ir.diagnostics.v10",
+  "schema_version": "resume-ir.diagnostics.v11",
   "privacy_boundary": "redacted_local_aggregate",
   "contains_raw_resume_text": false,
   "contains_queries": false,
@@ -110,5 +110,6 @@
     "ocr_language_unavailable": 0,
     "scan_error_buckets": []
   },
+  "source_root_deletion_attempts": [],
   "benchmark_refs": []
 }

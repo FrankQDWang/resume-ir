@@ -403,7 +403,7 @@ export function managedRootControlOutcome(reply: DaemonReply<ManagedRootControlB
 }
 
 export interface DiagnosticsBody {
-  schema_version: "resume-ir.diagnostics.v10"
+  schema_version: "resume-ir.diagnostics.v11"
   privacy_boundary: "redacted_local_aggregate"
   evidence_lane: "gui_manual"
   evidence_status: "unaccepted"
@@ -437,6 +437,14 @@ export interface DiagnosticsBody {
   }
   repair_progress: RepairProgress | null
   error: DaemonServiceError | null
+  source_root_deletion_attempts: Array<{
+    phase: "requested" | "quiescing" | "publishing" | "purging" | "verifying"
+    attempt_count: number
+    last_attempt_at: number
+    last_error_phase: "requested" | "quiescing" | "publishing" | "purging" | "verifying" | null
+    last_error_code: "import_quiescence_timeout" | "ocr_quiescence_timeout" | "publication_failed" | "metadata_purge_failed" | "privacy_cleanup_failed" | "receipt_completion_failed" | "internal" | null
+    last_error_at: number | null
+  }> | null
   metrics: {
     ipc: IpcMetrics
     indexed_documents: number | null

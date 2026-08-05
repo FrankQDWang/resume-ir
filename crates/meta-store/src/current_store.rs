@@ -19,7 +19,7 @@ use crate::{
     forward_migration,
     migration_v27::{open_encrypted_read_connection, store_identity, sync_validated_store},
     migration_v29, schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34,
-    schema_v35, MetaStoreError, MetadataEncryptionState, OwnedMetaStore, Result,
+    schema_v35, schema_v36, MetaStoreError, MetadataEncryptionState, OwnedMetaStore, Result,
     METADATA_ENCRYPTION_KEY_LEN,
 };
 use rusqlite::{backup::Backup, types::ValueRef, Connection, OptionalExtension};
@@ -30,7 +30,9 @@ mod initialization_receipt;
 #[path = "forward_migration_receipt.rs"]
 mod receipt;
 
-use initialization_receipt::{InitializationPhase, InitializationReceipt};
+use initialization_receipt::{
+    InitializationGeneration, InitializationPhase, InitializationReceipt,
+};
 use receipt::{MigrationReceipt, ReceiptPhase};
 
 const STAGING_PREFIX: &str = ".metadata-forward-stage-";
@@ -59,7 +61,8 @@ pub(super) fn migration_required(data_dir: &Path) -> Result<bool> {
         }
         schema_v33::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(true),
         schema_v34::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(true),
-        schema_v35::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(false),
+        schema_v35::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(true),
+        schema_v36::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(false),
         _ => Err(MetaStoreError::unsupported_store_schema()),
     }
 }
@@ -117,7 +120,7 @@ pub(super) fn prepare_active_store(
         read_manifest_schema_version(&manifest_path)?,
     );
     match authority {
-        (2, schema_v35::VERSION) => {
+        (2, schema_v36::VERSION) => {
             let manifest = read_manifest(&manifest_path)?;
             let key = read_key(data_dir)?;
             let path = data_dir.join(&manifest.file_name);
@@ -129,7 +132,8 @@ pub(super) fn prepare_active_store(
         | (2, schema_v31::VERSION)
         | (2, schema_v32::VERSION)
         | (2, schema_v33::VERSION)
-        | (2, schema_v34::VERSION) => {
+        | (2, schema_v34::VERSION)
+        | (2, schema_v35::VERSION) => {
             let manifest = read_manifest(&manifest_path)?;
             let key = read_key(data_dir)?;
             migrate_prior(owner, manifest, key)
@@ -142,8 +146,8 @@ pub(super) fn validate_current_connection(
     connection: &Connection,
     store_id_digest: &str,
 ) -> Result<()> {
-    migration_v29::validate_active_connection(connection, schema_v35::VERSION, store_id_digest)?;
-    forward_migration::validate_chain(connection, schema_v29::VERSION, schema_v35::VERSION)
+    migration_v29::validate_active_connection(connection, schema_v36::VERSION, store_id_digest)?;
+    forward_migration::validate_chain(connection, schema_v29::VERSION, schema_v36::VERSION)
 }
 
 fn migrate_prior(
@@ -164,10 +168,10 @@ fn migrate_prior(
 
     let migration_id = random_store_id_digest()?;
     let staging_file = format!("{STAGING_PREFIX}{}.sqlite3", &migration_id[..16]);
-    let target_file = format!("metadata-v35-{}.sqlite3", &migration_id[..16]);
+    let target_file = format!("metadata-v36-{}.sqlite3", &migration_id[..16]);
     let target_manifest = ActiveStoreManifest {
         file_name: target_file.clone(),
-        schema_version: schema_v35::VERSION,
+        schema_version: schema_v36::VERSION,
         store_id_digest: source_manifest.store_id_digest.clone(),
     };
     let mut receipt = MigrationReceipt {
@@ -225,8 +229,8 @@ fn create_fresh_store(
     let mut receipt = InitializationReceipt::new(initialization_id);
     initialization_receipt::persist(data_dir, &receipt)?;
     let key = crate::random_metadata_encryption_key()?;
-    let staging_path = data_dir.join(receipt.staging_file());
-    let target_path = data_dir.join(receipt.target_file());
+    let staging_path = data_dir.join(receipt.staging_file(InitializationGeneration::V36));
+    let target_path = data_dir.join(receipt.target_file(InitializationGeneration::V36));
     let connection = create_encrypted_writer(&staging_path, &key)?;
     let store = OwnedMetaStore::from_owned_connection(
         connection,
@@ -238,7 +242,7 @@ fn create_fresh_store(
         .applied_versions()
         .iter()
         .copied()
-        .ne(1..=schema_v35::VERSION)
+        .ne(1..=schema_v36::VERSION)
     {
         return Err(MetaStoreError::storage_invariant());
     }
@@ -248,8 +252,8 @@ fn create_fresh_store(
     fs::rename(&staging_path, &target_path).map_err(MetaStoreError::io_storage)?;
     sync_parent_directory(data_dir)?;
     let manifest = ActiveStoreManifest {
-        file_name: receipt.target_file().to_string(),
-        schema_version: schema_v35::VERSION,
+        file_name: receipt.target_file(InitializationGeneration::V36),
+        schema_version: schema_v36::VERSION,
         store_id_digest: store_id_digest.clone(),
     };
     validate_current_store(&target_path, &key, &store_id_digest)?;
@@ -307,7 +311,7 @@ fn validate_store_for_manifest(
     manifest: &ActiveStoreManifest,
 ) -> Result<()> {
     let path = data_dir.join(&manifest.file_name);
-    if manifest.schema_version == schema_v35::VERSION {
+    if manifest.schema_version == schema_v36::VERSION {
         validate_current_store(&path, key, &manifest.store_id_digest)
     } else {
         if !owner_regular_file_exists(&path)? {
@@ -320,7 +324,7 @@ fn validate_store_for_manifest(
 
 fn require_current_manifest(path: &Path) -> Result<()> {
     if read_manifest_format_version(path)? != 2
-        || read_manifest_schema_version(path)? != schema_v35::VERSION
+        || read_manifest_schema_version(path)? != schema_v36::VERSION
     {
         return Err(MetaStoreError::unsupported_store_schema());
     }
@@ -332,7 +336,12 @@ fn validate_source_store(connection: &Connection, manifest: &ActiveStoreManifest
         schema_v29::VERSION => {
             migration_v29::validate_current_v29_connection(connection, &manifest.store_id_digest)
         }
-        schema_v30::VERSION | schema_v31::VERSION | schema_v32::VERSION => {
+        schema_v30::VERSION
+        | schema_v31::VERSION
+        | schema_v32::VERSION
+        | schema_v33::VERSION
+        | schema_v34::VERSION
+        | schema_v35::VERSION => {
             migration_v29::validate_active_connection(
                 connection,
                 manifest.schema_version,
@@ -412,17 +421,16 @@ fn reconcile_initialization_receipt(data_dir: &Path) -> Result<()> {
     let manifest_path = data_dir.join(MANIFEST_FILE);
     if owner_regular_file_exists(&manifest_path)? {
         let manifest = read_manifest(&manifest_path)?;
-        let target = receipt
-            .target_manifest()
-            .ok_or_else(MetaStoreError::storage_invariant)?;
-        if manifest != target {
+        let matching_targets = InitializationGeneration::RECOVERABLE
+            .into_iter()
+            .filter_map(|generation| receipt.target_manifest(generation))
+            .filter(|target| *target == manifest)
+            .collect::<Vec<_>>();
+        let [target] = matching_targets.as_slice() else {
             return Err(MetaStoreError::storage_invariant());
-        }
-        validate_current_store(
-            &data_dir.join(&manifest.file_name),
-            &read_key(data_dir)?,
-            &manifest.store_id_digest,
-        )?;
+        };
+        validate_store_for_manifest(data_dir, &read_key(data_dir)?, target)?;
+        reject_unexpected_initialization_candidates(data_dir, &receipt, target)?;
         initialization_receipt::remove(data_dir)?;
         return Ok(());
     }
@@ -430,25 +438,61 @@ fn reconcile_initialization_receipt(data_dir: &Path) -> Result<()> {
     match receipt.phase() {
         InitializationPhase::Preparing => cleanup_initialization(data_dir, &receipt),
         InitializationPhase::Ready => {
-            let Some(target) = receipt.target_manifest() else {
-                return Err(MetaStoreError::storage_invariant());
-            };
             let key = match read_key(data_dir) {
                 Ok(key) => key,
                 Err(_) => return cleanup_initialization(data_dir, &receipt),
             };
-            let target_path = data_dir.join(&target.file_name);
-            if validate_current_store(&target_path, &key, &target.store_id_digest).is_err() {
-                return cleanup_initialization(data_dir, &receipt);
-            }
-            publish_new_active_store(data_dir, &target, || Ok(()))?;
+            let valid_targets = InitializationGeneration::RECOVERABLE
+                .into_iter()
+                .filter_map(|generation| receipt.target_manifest(generation))
+                .filter(|target| validate_store_for_manifest(data_dir, &key, target).is_ok())
+                .collect::<Vec<_>>();
+            let [target] = valid_targets.as_slice() else {
+                if valid_targets.is_empty() {
+                    return cleanup_initialization(data_dir, &receipt);
+                }
+                return Err(MetaStoreError::storage_invariant());
+            };
+            reject_unexpected_initialization_candidates(data_dir, &receipt, target)?;
+            publish_new_active_store(data_dir, target, || Ok(()))?;
             initialization_receipt::remove(data_dir)
         }
     }
 }
 
+fn reject_unexpected_initialization_candidates(
+    data_dir: &Path,
+    receipt: &InitializationReceipt,
+    selected_target: &ActiveStoreManifest,
+) -> Result<()> {
+    for file_name in InitializationGeneration::RECOVERABLE
+        .into_iter()
+        .flat_map(|generation| {
+            [
+                receipt.staging_file(generation),
+                receipt.target_file(generation),
+            ]
+        })
+    {
+        if file_name != selected_target.file_name
+            && owner_regular_file_exists(&data_dir.join(file_name))?
+        {
+            return Err(MetaStoreError::storage_invariant());
+        }
+    }
+    Ok(())
+}
+
 fn cleanup_initialization(data_dir: &Path, receipt: &InitializationReceipt) -> Result<()> {
-    for file_name in [receipt.staging_file(), receipt.target_file()] {
+    for file_name in InitializationGeneration::RECOVERABLE
+        .into_iter()
+        .flat_map(|generation| {
+            [
+                receipt.staging_file(generation),
+                receipt.target_file(generation),
+            ]
+        })
+    {
         let path = data_dir.join(file_name);
         match fs::symlink_metadata(&path) {
             Ok(metadata) => {

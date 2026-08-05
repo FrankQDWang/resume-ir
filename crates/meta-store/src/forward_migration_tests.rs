@@ -1,4 +1,5 @@
 use super::*;
+use crate::{EphemeralMetaStore, UnixTimestamp};
 
 fn v32_connection() -> Connection {
     let connection = Connection::open_in_memory().unwrap();
@@ -119,4 +120,45 @@ fn pdf_reprocess_backfill_uses_a_bounded_lookup_and_leaves_no_schema_artifact() 
             .unwrap(),
         0
     );
+}
+
+#[test]
+fn v36_backfills_zero_attempt_evidence_for_existing_deletion_receipts() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_800_300_400);
+    let root = store
+        .register_source_root(
+            "/synthetic/v36-backfill",
+            "/synthetic/v36-backfill",
+            "Synthetic v36 backfill",
+            now,
+        )
+        .unwrap();
+    store.begin_source_root_deletion(&root.id, now).unwrap();
+
+    let mut connection = store.connection.borrow_mut();
+    connection
+        .execute_batch("DROP TABLE source_root_deletion_attempt_evidence;")
+        .unwrap();
+    let transaction = connection.transaction().unwrap();
+    apply_v35_to_v36(&transaction).unwrap();
+    transaction.commit().unwrap();
+
+    let evidence = connection
+        .query_row(
+            "SELECT attempt_count, last_attempt_at_seconds, last_error_code
+             FROM source_root_deletion_attempt_evidence
+             WHERE root_id = ?1",
+            [root.id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(evidence, (0, None, None));
 }
