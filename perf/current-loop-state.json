@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_active",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "correctness_passed",
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "de388fe83cd390f32b37a0e96ed2c05d889d5e6af8377fe340d7e7b950640c15",
@@ -10,7 +10,7 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "279432c5870801a4cf0aacfeb4a0d97532c20b57"
+    "git_head_sha": "0879adf3cf15ad54ad0a582e1bbafab374638c1c"
   },
   "current_slice": "#443 one-time legacy Quiescing deletion reconciliation",
   "hypothesis": {
@@ -18,11 +18,31 @@
     "acceptance_cell": "w0_docs",
     "expected_effect": "a valid marker-1 Quiescing receipt is re-attested exactly once before the next publication or purge attempt, while marker-2 retries retain O(1) admission and the original one-row evidence write",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/443",
-    "after_measurement_ref": "pending",
+    "after_measurement_ref": "PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation",
     "reprofile_ref": "not_applicable_correctness_slice",
-    "decision": "pending"
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"
+    },
+    {
+      "from": "red_check_written",
+      "to": "implementation_active",
+      "evidence_ref": "PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"
+    },
+    {
+      "from": "slice_active",
+      "to": "red_check_written",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/443"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3727,7 +3747,11 @@
       {"command":"schema v37 legacy and current checkpoint marker red and green witness","exit_code":0,"evidence_ref":"PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"},
       {"command":"18 current-store tests including exact v36 forward and initialization receipt recovery","exit_code":0,"evidence_ref":"PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"},
       {"command":"cargo test -p meta-store --locked","exit_code":0,"evidence_ref":"PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"},
-      {"command":"cargo test -p resume-daemon --test s20_ipc startup_recovers_source_root_deletion_with_the_same_receipt --locked -- --exact","exit_code":0,"evidence_ref":"PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"}
+      {"command":"cargo test -p resume-daemon --test s20_ipc startup_recovers_source_root_deletion_with_the_same_receipt --locked -- --exact","exit_code":0,"evidence_ref":"PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol"},
+      {"command":"Issue #443 one-time reconciliation and transactional rollback synthetic tests","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"},
+      {"command":"cargo test -p meta-store --locked","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"},
+      {"command":"cargo test -p resume-daemon --test s20_ipc startup_recovers_source_root_deletion_with_the_same_receipt --locked -- --exact","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"},
+      {"command":"cargo clippy -p meta-store -p resume-daemon --all-targets --locked -- -D warnings and cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3742,10 +3766,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-443-legacy-quiescing-reconciliation-2026-08-05",
-  "state_version": 672,
-  "previous_state_hash": "f6252fa6356bdb9af02a8776a48490db3611952c88d5d1e058b811f20e96b140",
-  "expected_state_version": 672,
-  "last_confirmed_side_effect": "issue_443_created",
+  "state_version": 676,
+  "previous_state_hash": "db4b7240529ca403487391310aa9c4bb65711f1e35c51d7d927e3675909a4f6a",
+  "expected_state_version": 676,
+  "last_confirmed_side_effect": "issue_443_local_verification_completed",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
