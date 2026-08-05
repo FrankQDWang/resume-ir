@@ -5,24 +5,44 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "be4d602f4244dc1459a51eeb8f3b94190264a002b4b201c1e739f34f92df1495",
+    "active_goal_sha256": "6adcdbb3d93455adbe0dc9af8b9071af58ebee1c92396f0a0dfe3ea182fd395b",
     "acceptance_matrix_sha256": "3bb057fbe6d376f54eeb51f048ba1aeccabfe9536cb780e5bd3d58caebccada6",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "a37cdd740d0b295d64dad55f7fc8723a897e9d47"
+    "git_head_sha": "f2fce9fd27ab1d4bfb06c1dfe7113cdb6a18ae54"
   },
-  "current_slice": "#420 persistent source-root deletion attempt evidence",
+  "current_slice": "#433 private source-root deletion completion residual owner",
   "hypothesis": {
-    "id": "issue-420-source-root-deletion-attempt-evidence",
+    "id": "issue-433-source-root-deletion-completion-residual-owner",
     "acceptance_cell": "w0_docs",
-    "expected_effect": "one durable bounded attempt row and typed failure cause make incomplete deletion retries observable across restart without changing deletion or retry behavior",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/420",
+    "expected_effect": "one private typed SQL row reader removes duplicated completion-residual predicates while preserving the existing transaction and deletion behavior",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/433",
     "after_measurement_ref": "pending",
     "reprofile_ref": "not_applicable_correctness_slice",
     "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/433"
+    },
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/420#issuecomment-5189254213"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/432"
+    },
+    {
+      "from": "slice_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/420"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3635,15 +3655,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-420-source-root-deletion-attempt-evidence-2026-08-05",
-  "state_version": 652,
-  "previous_state_hash": "01efedfbd68f08a5df43178645ac8843cf428bb3dc798bb6a9902db8f75f07b0",
-  "expected_state_version": 652,
-  "last_confirmed_side_effect": "issue_420_reactivation_contract_selected",
+  "run_id": "issue-433-source-root-deletion-completion-residual-owner-2026-08-05",
+  "state_version": 656,
+  "previous_state_hash": "7274dcaea5e31a83466414203ae780d783552a0398cd0cecfc75204e50a25def",
+  "expected_state_version": 656,
+  "last_confirmed_side_effect": "issue_433_activation_contract_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#420",
+    "primary_issue": "#433",
     "active_prs": [],
     "open_blockers": []
   }

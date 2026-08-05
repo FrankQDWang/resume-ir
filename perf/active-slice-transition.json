@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-428-to-420-deletion-attempt-evidence-reactivation-2026-08-05",
-  "from_issue": "#428",
-  "to_issue": "#420",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/428#issuecomment-5188976604",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/420",
-  "base_active_goal_sha256": "81c0fcacce3028653aeea3589f3afbbcf2298a9d3f2d8dfcf9a60136818d55b0",
+  "transition_id": "issue-420-to-433-deletion-completion-residual-owner-2026-08-05",
+  "from_issue": "#420",
+  "to_issue": "#433",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/420#issuecomment-5189254213",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/433",
+  "base_active_goal_sha256": "be4d602f4244dc1459a51eeb8f3b94190264a002b4b201c1e739f34f92df1495",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
