@@ -1,28 +1,33 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "correctness_passed",
+  "workflow_state": "slice_active",
+  "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "e43caddf4d7864db65eac2a705a5b826a130a61b5c9af5da43dda7008dd979d8",
+    "active_goal_sha256": "b53f2f2dda8d579b4e1f3e243261f25f22612170b179f034348cc19a4f7cd211",
     "acceptance_matrix_sha256": "3bb057fbe6d376f54eeb51f048ba1aeccabfe9536cb780e5bd3d58caebccada6",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "7df2ae7921883495c5d8b27b3ff0ea1f423de31d"
+    "git_head_sha": "ccddcab61bf2bc9c9e32e41468258f1edba5a45b"
   },
-  "current_slice": "#436 Requested deletion checkpoint snapshot reconciliation",
+  "current_slice": "#440 durable source-root deletion checkpoint protocol marker",
   "hypothesis": {
-    "id": "issue-436-source-root-deletion-requested-checkpoint-reconciliation",
+    "id": "issue-440-source-root-deletion-checkpoint-protocol",
     "acceptance_cell": "w0_docs",
-    "expected_effect": "the existing generic setter atomically refreshes a Requested receipt snapshot from current SQLite ownership before advancing to Quiescing, without changing later phases",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/436",
-    "after_measurement_ref": "PROGRESS.md#issue-436-requested-deletion-checkpoint-reconciliation",
+    "expected_effect": "schema v37 durably marks legacy or unattested deletion receipts as 1 and explicitly marks new receipt snapshots satisfying checkpoint invariant v2 as 2 without changing runtime reconciliation behavior",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/440",
+    "after_measurement_ref": "pending",
     "reprofile_ref": "not_applicable_correctness_slice",
-    "decision": "accepted"
+    "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/440"
+    },
     {
       "from": "verification_active",
       "to": "evidence_review",
@@ -3707,15 +3712,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-436-source-root-deletion-requested-checkpoint-reconciliation-2026-08-05",
-  "state_version": 666,
-  "previous_state_hash": "6234acca2ba8845e1bbf5517be8bfa33e1bd373dcdd75bf16b0fccdf16a1be88",
-  "expected_state_version": 666,
-  "last_confirmed_side_effect": "issue_436_local_verification_completed",
+  "run_id": "issue-440-source-root-deletion-checkpoint-protocol-2026-08-05",
+  "state_version": 667,
+  "previous_state_hash": "e4fc6e30a37c0aa1433841779c203eadfbe74a33b23a1c0a839f4fb520b9c369",
+  "expected_state_version": 667,
+  "last_confirmed_side_effect": "issue_440_activation_contract_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#436",
+    "primary_issue": "#440",
     "active_prs": [],
     "open_blockers": []
   }
