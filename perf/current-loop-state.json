@@ -1,28 +1,33 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "correctness_passed",
+  "workflow_state": "slice_active",
+  "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "b53f2f2dda8d579b4e1f3e243261f25f22612170b179f034348cc19a4f7cd211",
+    "active_goal_sha256": "de388fe83cd390f32b37a0e96ed2c05d889d5e6af8377fe340d7e7b950640c15",
     "acceptance_matrix_sha256": "dc00a615d21f4f932931c50923e45a61024a80c462ac3b7b1aed919f1af3570b",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "0748b2ee0135981d713c0a8fcf0073e4e49f48be"
+    "git_head_sha": "279432c5870801a4cf0aacfeb4a0d97532c20b57"
   },
-  "current_slice": "#440 durable source-root deletion checkpoint protocol marker",
+  "current_slice": "#443 one-time legacy Quiescing deletion reconciliation",
   "hypothesis": {
-    "id": "issue-440-source-root-deletion-checkpoint-protocol",
+    "id": "issue-443-legacy-quiescing-reconciliation",
     "acceptance_cell": "w0_docs",
-    "expected_effect": "schema v37 durably marks legacy or unattested deletion receipts as 1 and explicitly marks new receipt snapshots satisfying checkpoint invariant v2 as 2 without changing runtime reconciliation behavior",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/440",
-    "after_measurement_ref": "PROGRESS.md#issue-440-durable-source-root-deletion-checkpoint-protocol",
+    "expected_effect": "a valid marker-1 Quiescing receipt is re-attested exactly once before the next publication or purge attempt, while marker-2 retries retain O(1) admission and the original one-row evidence write",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/443",
+    "after_measurement_ref": "pending",
     "reprofile_ref": "not_applicable_correctness_slice",
-    "decision": "accepted"
+    "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/443"
+    },
     {
       "from": "verification_active",
       "to": "evidence_review",
@@ -3736,15 +3741,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-440-source-root-deletion-checkpoint-protocol-2026-08-05",
-  "state_version": 671,
-  "previous_state_hash": "e9c15f4995cfbcec1e2388bfe997803b204dca36dc557b335664577b41c8ccdd",
-  "expected_state_version": 671,
-  "last_confirmed_side_effect": "issue_440_local_verification_completed",
+  "run_id": "issue-443-legacy-quiescing-reconciliation-2026-08-05",
+  "state_version": 672,
+  "previous_state_hash": "f6252fa6356bdb9af02a8776a48490db3611952c88d5d1e058b811f20e96b140",
+  "expected_state_version": 672,
+  "last_confirmed_side_effect": "issue_443_created",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#440",
+    "primary_issue": "#443",
     "active_prs": [],
     "open_blockers": []
   }
