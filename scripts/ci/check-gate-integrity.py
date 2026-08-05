@@ -11,6 +11,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 from copy import deepcopy
 
@@ -310,6 +311,8 @@ def parse_name_status(raw: str) -> dict[str, str]:
         fields = line.split("\t")
         if len(fields) == 2:
             status, path = fields
+            if status not in {"A", "D", "M"}:
+                fail(f"gate integrity: unsupported name-status value {status!r}")
             if not path or path in statuses:
                 fail(f"gate integrity: malformed or duplicate name-status path {line!r}")
             statuses[path] = status
@@ -318,6 +321,43 @@ def parse_name_status(raw: str) -> dict[str, str]:
             fail(f"gate integrity: rename/copy status is not allowed in this contract: {line!r}")
         fail(f"gate integrity: malformed name-status record {line!r}")
     return statuses
+
+
+def changed_path_statuses(repo: pathlib.Path, diff_args: list[str]) -> dict[str, str]:
+    completed = subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--name-status",
+            "--no-renames",
+            *diff_args,
+        ],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        fail(f"git diff --name-status --no-renames failed: {completed.stderr.strip()}")
+    return parse_name_status(completed.stdout)
+
+
+def validate_changed_paths_allowed(active_slice: dict, changed: set[str]) -> set[str]:
+    allowed_paths = active_slice.get("allowed_paths")
+    if not isinstance(allowed_paths, list) or not allowed_paths or not all(
+        isinstance(path, str) and path for path in allowed_paths
+    ):
+        fail("active slice requires non-empty allowed_paths")
+    allowed = set(allowed_paths)
+    if len(allowed) != len(allowed_paths):
+        fail("active slice allowed_paths must be unique")
+    unauthorized = changed - allowed
+    if unauthorized:
+        fail(f"changed paths are outside ACTIVE_GOAL allowed_paths: {sorted(unauthorized)!r}")
+    return allowed
 
 
 def ref_exists(ref: str) -> bool:
@@ -359,8 +399,7 @@ def merge_base_and_changed_paths() -> tuple[str, dict[str, str]]:
     merge_base = git(["merge-base", base_ref, "HEAD"])
     if git(["diff", "--name-only"]) or git(["ls-files", "--others", "--exclude-standard"]):
         fail("gate integrity requires the index and working tree to match with no untracked files")
-    output = git(["diff", "--cached", "--name-status", "--find-renames", merge_base])
-    return merge_base, parse_name_status(output)
+    return merge_base, changed_path_statuses(ROOT, ["--cached", merge_base])
 
 
 def load_toml_at_revision(revision: str, path: str) -> dict:
@@ -485,6 +524,75 @@ def self_test_successor_scope_exception_contract() -> None:
         except ValueError:
             continue
         fail(f"successor scope-exception self-test accepted false for {label}")
+
+
+def self_test_changed_path_authorization() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        repo = pathlib.Path(directory)
+
+        def run_git(*args: str) -> str:
+            completed = subprocess.run(
+                ["git", *args],
+                cwd=repo,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                fail(f"changed-path self-test git {' '.join(args)} failed: {completed.stderr.strip()}")
+            return completed.stdout.strip()
+
+        run_git("init", "--quiet")
+        run_git("config", "user.email", "gate-self-test@example.invalid")
+        run_git("config", "user.name", "Gate Self Test")
+        old_path = "fixtures/diagnostics-v9.json"
+        new_path = "fixtures/diagnostics-v11.json"
+        old_file = repo / old_path
+        old_file.parent.mkdir(parents=True)
+        body = "\n".join(f'{{"record": {index}, "ready": true}}' for index in range(100)) + "\n"
+        old_file.write_text(body, encoding="utf-8")
+        run_git("add", old_path)
+        run_git("commit", "--quiet", "-m", "base")
+        base = run_git("rev-parse", "HEAD")
+
+        old_file.unlink()
+        (repo / new_path).write_text(body.replace('"record": 0', '"record": 100'), encoding="utf-8")
+        run_git("add", "--all")
+        inferred = run_git("diff", "--cached", "--name-status", "--find-renames", base)
+        if not inferred.startswith("R"):
+            fail("changed-path self-test fixture did not trigger rename similarity")
+
+        statuses = changed_path_statuses(repo, ["--cached", base])
+        if statuses != {old_path: "D", new_path: "A"}:
+            fail(f"changed-path self-test expected D+A, found {statuses!r}")
+        validate_changed_paths_allowed({"allowed_paths": [old_path, new_path]}, set(statuses))
+        for label, allowed, changed in (
+            ("missing deleted source", [new_path], set(statuses)),
+            ("missing added target", [old_path], set(statuses)),
+            ("extra path", [old_path, new_path], set(statuses) | {"extra.txt"}),
+        ):
+            try:
+                validate_changed_paths_allowed({"allowed_paths": allowed}, changed)
+            except ValueError:
+                continue
+            fail(f"changed-path authorization self-test accepted {label}")
+
+    for label, raw in (
+        ("rename", "R100\told\tnew"),
+        ("copy", "C100\told\tnew"),
+        ("unknown status", "X\tpath"),
+        ("duplicate", "A\tpath\nD\tpath"),
+        ("missing path", "A\t"),
+        ("missing status", "\tpath"),
+        ("extra field", "A\tpath\textra"),
+        ("malformed", "A"),
+    ):
+        try:
+            parse_name_status(raw)
+        except ValueError:
+            continue
+        fail(f"name-status self-test accepted {label}")
 
 
 def validate_current_main_reactivation_contract(raw: dict, head_slice: dict) -> None:
@@ -884,14 +992,10 @@ def validate_declared_successor_transition(
             current_main_attribution or current_main_reactivation
         ),
     )
-    allowed_paths = head_slice.get("allowed_paths")
-    if not isinstance(allowed_paths, list) or not all(isinstance(path, str) and path for path in allowed_paths):
-        fail("successor active slice requires non-empty allowed_paths")
-    if len(set(allowed_paths)) != len(allowed_paths):
-        fail("successor active slice allowed_paths must be unique")
-    if current_main_attribution and set(allowed_paths) != CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS:
+    allowed_paths = validate_changed_paths_allowed(head_slice, changed)
+    if current_main_attribution and allowed_paths != CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS:
         fail("successor active slice allowed_paths mismatch")
-    if current_main_reactivation and set(allowed_paths) != CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS:
+    if current_main_reactivation and allowed_paths != CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS:
         fail("current-main reactivation allowed_paths mismatch")
     bootstrap = raw.get("bootstrap_gate_change")
     require_bool(bootstrap, bootstrap is True, f"{SUCCESSOR_TRANSITION_RECORD}.bootstrap_gate_change")
@@ -1093,6 +1197,8 @@ def validate_transition_scope(
                 validate_event_chain,
                 synthetic_head_files,
             )
+        elif head_issue not in {"#143", "#159"}:
+            validate_changed_paths_allowed(head_slice, changed)
         return
 
     if (base_issue, head_issue) == ("#140", "#143"):
@@ -1476,6 +1582,7 @@ def is_gate_path(path: str) -> bool:
 def main() -> int:
     self_test_transition_record_shapes()
     self_test_successor_scope_exception_contract()
+    self_test_changed_path_authorization()
     self_test_current_main_reactivation_contract()
     self_test_current_main_same_issue_evidence_scope()
     if sys.argv[1:]:
