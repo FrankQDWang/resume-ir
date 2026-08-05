@@ -5,24 +5,44 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "81c0fcacce3028653aeea3589f3afbbcf2298a9d3f2d8dfcf9a60136818d55b0",
+    "active_goal_sha256": "be4d602f4244dc1459a51eeb8f3b94190264a002b4b201c1e739f34f92df1495",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "d517287ae82b10c285d545910cbb350b47da16bf"
+    "git_head_sha": "a37cdd740d0b295d64dad55f7fc8723a897e9d47"
   },
-  "current_slice": "#428 gate changed-path status owner",
+  "current_slice": "#420 persistent source-root deletion attempt evidence",
   "hypothesis": {
-    "id": "issue-428-gate-changed-path-status-owner",
+    "id": "issue-420-source-root-deletion-attempt-evidence",
     "acceptance_cell": "w0_docs",
-    "expected_effect": "path-level A/D/M discovery removes rename-similarity false positives while generic allowed-path and transition-specific exact-set checks remain fail closed",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/428",
+    "expected_effect": "one durable bounded attempt row and typed failure cause make incomplete deletion retries observable across restart without changing deletion or retry behavior",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/420",
     "after_measurement_ref": "pending",
     "reprofile_ref": "not_applicable_correctness_slice",
     "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/420"
+    },
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/428#issuecomment-5188976604"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/430"
+    },
+    {
+      "from": "slice_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/428"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3615,15 +3635,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-428-gate-changed-path-status-owner-2026-08-05",
+  "run_id": "issue-420-source-root-deletion-attempt-evidence-2026-08-05",
   "state_version": 652,
   "previous_state_hash": "01efedfbd68f08a5df43178645ac8843cf428bb3dc798bb6a9902db8f75f07b0",
   "expected_state_version": 652,
-  "last_confirmed_side_effect": "issue_428_activation_contract_selected",
+  "last_confirmed_side_effect": "issue_420_reactivation_contract_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#428",
+    "primary_issue": "#420",
     "active_prs": [],
     "open_blockers": []
   }
