@@ -12,73 +12,39 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#420"
-name = "source_root_deletion_attempt_evidence"
+issue = "#428"
+name = "gate_changed_path_status_owner_v1"
 contract_change_allowed = true
-production_code_allowed = true
+production_code_allowed = false
 private_benchmark_allowed = false
 configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
-scope_exception = true
-scope_exception_reason = "Issue #420 is a reviewer-approved vertical contract slice spanning 40 paths and exceeding the default 800-line budget: schema 36 persists bounded source-root deletion attempt evidence, the existing worker records typed fixed error enums without changing retry or deletion semantics, and strict diagnostics v11 exposes at most 16 redacted in-progress records. It requires a normal protected squash merge; auto-merge, admin bypass, direct main push, and gate weakening remain forbidden."
+scope_exception = false
+scope_exception_reason = "No exception is used. Issue #428 is a bounded governance repair that makes changed-path authorization independent of Git rename-similarity heuristics while preserving exact allowed-path and transition-set enforcement."
 allowed_paths = [
-  "crates/meta-store/src/schema_v36.rs",
-  "crates/meta-store/src/lib.rs",
-  "crates/meta-store/src/forward_migration.rs",
-  "crates/meta-store/src/forward_migration_tests.rs",
-  "crates/meta-store/src/active_store_manifest.rs",
-  "crates/meta-store/src/current_store.rs",
-  "crates/meta-store/src/current_store_tests.rs",
-  "crates/meta-store/src/current_store_initialization_receipt.rs",
-  "crates/meta-store/src/forward_migration_receipt.rs",
-  "crates/meta-store/src/source_root_deletion.rs",
-  "crates/meta-store/src/source_root_deletion_tests.rs",
-  "crates/meta-store/tests/source_root_deletion.rs",
-  "crates/daemon/src/source_root_deletion.rs",
-  "crates/daemon/src/ipc/diagnostics.rs",
-  "crates/daemon/tests/s20_ipc.rs",
-  "crates/daemon/tests/s83_v27_v28_convergence.rs",
-  "apps/desktop/src-tauri/src/daemon_response.rs",
-  "apps/desktop/src-tauri/src/daemon_response/diagnostics.rs",
-  "apps/desktop/src-tauri/tests/fixtures/daemon-diagnostics-v9-ready.json",
-  "apps/desktop/src-tauri/tests/fixtures/daemon-diagnostics-v11-ready.json",
-  "apps/desktop/scripts/macos-installed-main-acceptance/ipc-contracts.mjs",
-  "apps/desktop/scripts/macos-installed-main-acceptance/fixtures.mjs",
-  "apps/desktop/scripts/macos-installed-main-acceptance/acceptance-sequence.mjs",
-  "apps/desktop/scripts/macos-installed-main-acceptance/ipc-contracts.node-test.mjs",
-  "apps/desktop/src/daemon.ts",
-  "apps/desktop/src/daemon-contract.ts",
-  "apps/desktop/src/daemon.test.ts",
-  "apps/desktop/src/App.tsx",
-  "03_next_goal_高性能本地检索GUI闭环/03_数据模型与存储协议.md",
-  "03_next_goal_高性能本地检索GUI闭环/06_Daemon_IPC与Diagnostics契约.md",
-  "03_next_goal_高性能本地检索GUI闭环/08_失败模式与恢复策略.md",
-  "03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md",
   "ACTIVE_GOAL.toml",
-  "PROGRESS.md",
   "perf/current-loop-state.json",
   "perf/active-slice-transition.json",
-  "perf/acceptance-matrix.toml",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "scripts/ci/check-performance-contracts.py",
+  "scripts/ci/check-gate-integrity.py",
 ]
-allowed_paths_role = "single_persisted_deletion_attempt_evidence_and_bounded_diagnostics_path"
+allowed_paths_role = "single_gate_changed_path_status_owner"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L0_source_root_deletion_observability"
-optimization_layer = "L1"
+observation_stage = "L0_governance_contract"
+optimization_layer = "L0"
 optimization_layer_selected = true
-hypothesis = "persisting one bounded attempt record before each existing deletion attempt and one fixed phase/error enum after failure will distinguish never-started receipts from active retry loops and survive restart without changing deletion phases, retry timing, cleanup order or user data visibility"
-expected_delta = "a synthetic failed deletion exposes phase, attempt_count, last_attempt_at and fixed last_error fields through additive diagnostics; a schema-35 source-root deletion receipt migrates with attempt_count zero; exact valid v35 forward-migration and initialization receipts recover before the v36 upgrade; successful deletion and capped retry delays remain unchanged"
-negative_control = "raw errors, paths, filenames, resume text, queries, candidate results, tokens, databases, indexes, unbounded arrays, residual inventories, retry-policy changes, new deletion phases, stale source-root deletion receipt reconciliation, durable queue conversion, root epochs or frontend presentation changes must fail closed"
-implementation_boundary = "schema-36 additive one-row attempt evidence, existing deletion worker recording, one strict diagnostics-v11 bounded projection across daemon, desktop and installed acceptance, and exact prior-current v35 metadata receipt recovery only; no source-root deletion cleanup or recovery behavior change"
-resident_pool_workload = "not applicable; deterministic synthetic metadata and daemon IPC tests own this correctness slice"
-resident_pool_acceptance = "not applicable; focused meta-store, daemon deletion, daemon IPC and desktop contract tests own this slice"
-full_product_acceptance = "schema-35-to-36 migration preservation, durable reopen, deterministic failure evidence, bounded redacted diagnostics, unchanged retry timing and unchanged successful deletion behavior"
+hypothesis = "treating Git name-status as a closed path-level A/D/M vocabulary with rename detection disabled removes similarity-based false positives while exact allowed-path and transition-set validation still rejects every unauthorized source or destination path"
+expected_delta = "similar deleted and added files are validated as two explicit paths; both paths must be authorized, while missing authorization, extra paths, rename/copy records, unknown statuses, duplicates and malformed records fail closed"
+negative_control = "issue-specific exceptions, rename-threshold tuning, content perturbation, compatibility fixture retention, truthiness, fallback parsing, allowed-path expansion or transition-set weakening must fail closed"
+implementation_boundary = "governance-only changed-path discovery, parsing and in-file self-tests in check-gate-integrity.py; no product runtime, schema, IPC, benchmark, budget, merge or branch-protection behavior change"
+resident_pool_workload = "not applicable; no runtime workload is executed"
+resident_pool_acceptance = "not applicable; temporary Git repository self-tests and focused governance contracts own this slice"
+full_product_acceptance = "the one-file governance diff passes in-file self-tests, full gate-integrity, autonomous, PR-budget, performance, loop-state, public-boundary and diff checks"
 raw_profile_boundary = "no private path, filename, resume text, raw query, candidate result, token, PID, log, trace, database, index, model or cache bytes may enter tests, screenshots, git or GitHub"
-rollback_condition = "revert if schema-35 receipts do not migrate losslessly, valid v35 metadata migration or initialization receipts cannot converge before the v36 upgrade, evidence does not survive reopen, diagnostics accepts raw or unbounded values, retry cadence changes, successful deletion regresses, or the slice starts repairing historical source-root deletion receipts"
+rollback_condition = "revert if either side of a delete/add pair can bypass path authorization, if any unsupported or malformed status is accepted, if transition exact-set checks weaken, or if historical gate behavior changes outside path classification"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
