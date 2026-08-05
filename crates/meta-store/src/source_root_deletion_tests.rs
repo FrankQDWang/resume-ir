@@ -8,6 +8,129 @@ use crate::{
     MetaStoreErrorClass, ScanTrigger, SourceRevision, SourceRootDeletionPhase, UnixTimestamp,
 };
 
+fn synthetic_document(label: &str, now: UnixTimestamp) -> (Document, SourceRevision) {
+    let source = format!("synthetic source-root deletion {label}");
+    let mut document = Document {
+        id: DocumentId::from_non_secret_parts(&["source-root-deletion", label]),
+        source_uri: format!("synthetic://source-root-deletion/{label}.pdf"),
+        normalized_path: format!("synthetic/source-root-deletion/{label}.pdf"),
+        file_name: format!("{label}.pdf"),
+        extension: FileExtension::Pdf,
+        byte_size: source.len() as u64,
+        mtime: now,
+        content_hash: None,
+        text_hash: None,
+        is_deleted: false,
+        created_at: now,
+        updated_at: now,
+        status: DocumentStatus::FieldsExtracted,
+    };
+    let revision = SourceRevision::for_content(
+        document.id.clone(),
+        ContentDigest::from_bytes(source.as_bytes()),
+        source.len() as u64,
+    );
+    document.content_hash = Some(revision.content_hash.as_str().to_string());
+    (document, revision)
+}
+
+#[test]
+fn requested_to_quiescing_generic_transition_reconciles_snapshot_atomically() {
+    const ROOT_A: &str = "/synthetic/requested-checkpoint-a";
+    const ROOT_B: &str = "/synthetic/requested-checkpoint-b";
+    const SCAN_A: &str = "requested-checkpoint-scan-a";
+    const SCAN_B: &str = "requested-checkpoint-scan-b";
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let requested_at = UnixTimestamp::from_unix_seconds(1_800_299_000);
+    let attempted_at = UnixTimestamp::from_unix_seconds(1_800_299_001);
+    let quiescing_at = UnixTimestamp::from_unix_seconds(1_800_299_002);
+    let root_a = store
+        .register_source_root(ROOT_A, ROOT_A, "Requested checkpoint A", requested_at)
+        .unwrap();
+    let root_b = store
+        .register_source_root(ROOT_B, ROOT_B, "Requested checkpoint B", requested_at)
+        .unwrap();
+    store
+        .begin_scan(&root_a.id, SCAN_A, ScanTrigger::Manual, requested_at)
+        .unwrap();
+    store
+        .begin_scan(&root_b.id, SCAN_B, ScanTrigger::Manual, requested_at)
+        .unwrap();
+
+    let (shared, shared_revision) = synthetic_document("shared", requested_at);
+    store.upsert_document(&shared).unwrap();
+    store.insert_source_revision(&shared_revision).unwrap();
+    store
+        .observe_source_occurrence(
+            &root_a.id,
+            "shared.pdf",
+            &shared.id,
+            &shared_revision.id,
+            SCAN_A,
+            requested_at,
+        )
+        .unwrap();
+    let requested = store
+        .begin_source_root_deletion(&root_a.id, requested_at)
+        .unwrap();
+    assert_eq!(
+        store.source_root_deletion_document_ids(&root_a.id).unwrap(),
+        vec![shared.id.clone()]
+    );
+    let attempted = store
+        .begin_source_root_deletion_attempt(&root_a.id, attempted_at)
+        .unwrap();
+
+    store
+        .observe_source_occurrence(
+            &root_b.id,
+            "shared.pdf",
+            &shared.id,
+            &shared_revision.id,
+            SCAN_B,
+            attempted_at,
+        )
+        .unwrap();
+    let (exclusive, exclusive_revision) = synthetic_document("exclusive", attempted_at);
+    store.upsert_document(&exclusive).unwrap();
+    store.insert_source_revision(&exclusive_revision).unwrap();
+    store
+        .observe_source_occurrence(
+            &root_a.id,
+            "exclusive.pdf",
+            &exclusive.id,
+            &exclusive_revision.id,
+            SCAN_A,
+            attempted_at,
+        )
+        .unwrap();
+
+    store
+        .set_source_root_deletion_phase(
+            &root_a.id,
+            SourceRootDeletionPhase::Quiescing,
+            quiescing_at,
+        )
+        .unwrap();
+
+    let quiescing = store.source_root_deletion(&root_a.id).unwrap().unwrap();
+    assert_eq!(quiescing.root_id, requested.root_id);
+    assert_eq!(quiescing.started_at, requested.started_at);
+    assert_eq!(quiescing.attempt_count, attempted.attempt_count);
+    assert_eq!(quiescing.last_attempt_at, attempted.last_attempt_at);
+    assert_eq!(quiescing.phase, SourceRootDeletionPhase::Quiescing);
+    assert_eq!(quiescing.affected_documents, 1);
+    assert_eq!(
+        store.source_root_deletion_document_ids(&root_a.id).unwrap(),
+        vec![exclusive.id.clone()]
+    );
+    assert!(store.document_by_id(&shared.id).unwrap().is_some());
+    assert!(store.document_by_id(&exclusive.id).unwrap().is_some());
+    assert!(store.source_root(&root_a.id).unwrap().is_some());
+    assert!(store.source_root(&root_b.id).unwrap().is_some());
+}
+
 #[test]
 fn completion_residual_owner_reads_one_typed_row_and_preserves_failed_completion() {
     const ROOT: &str = "/synthetic/completion-residual-owner";

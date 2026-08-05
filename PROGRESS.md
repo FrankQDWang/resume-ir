@@ -1,5 +1,42 @@
 # Progress
 
+## Issue #436 Requested deletion checkpoint reconciliation
+
+Issue #436 keeps `MetaStore::set_source_root_deletion_phase` as the sole public
+transition authority. Its existing `Requested` to `Quiescing` edge now delegates
+to one private checkpoint transaction that revalidates the receipt, recomputes
+the root's currently exclusive documents, replaces the deletion snapshot,
+refreshes canonical path and affected count, and advances the phase atomically.
+Every other phase transition retains its previous path and semantics.
+
+The exclusive-document query and snapshot replacement writer moved into the
+private `source_root_deletion_checkpoint` module and are shared by deletion
+begin and the checkpoint transaction. No public API, compatibility wrapper,
+second writer, schema, migration, daemon, IPC, diagnostic, phase, error or index
+change was added. The main deletion module is 767 lines and the private module
+is 119 lines, satisfying the repository's large-module boundary without
+format compression or unrelated deletion.
+
+The synthetic red check calls the existing generic setter. It begins with a
+Requested snapshot containing document X, makes X shared through another root,
+adds newly exclusive document Y to the deleting root, and proves Quiescing
+contains only Y while preserving the receipt identity, start time, attempt
+evidence, both documents and both roots. Before the production change this
+test retained X and failed; after the change it passes. The SQLite plan searches
+the target root through the source-occurrence primary key and checks competing
+ownership through `source_occurrence_document_idx`.
+
+Verification passed the focused checkpoint test, all 173 meta-store unit tests
+plus integration and doc tests, the existing daemon restart-recovery test,
+warnings-denied Clippy for meta-store and daemon, and workspace formatting.
+The daemon test's worktree-local PDFium prerequisite was restored only through
+the repository's verified four-file atomic staging owner; the ignored cache did
+not enter git. Runtime growth is bounded to the current root's exclusive
+document IDs and one replacement write per snapshot row inside the existing
+checkpoint transaction. No thread, queue, polling, IPC or corpus-wide scan was
+introduced. This slice does not solve mutations after the checkpoint, root
+epoch fencing, or reconciliation of historical Quiescing-and-later receipts.
+
 ## Issue #433 private source-root deletion completion residual owner
 
 Issue #433 removes the unused public `source_root_deletion_residual_count`
