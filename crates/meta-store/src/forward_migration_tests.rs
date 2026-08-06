@@ -173,6 +173,35 @@ fn ocr_claim_candidate_query_plan_is_bounded_by_job() {
             .all(|detail| !detail.contains("SCAN source_root") && !detail.contains("SCAN document")),
         "{plan:?}"
     );
+
+    let queue_query = format!(
+        "EXPLAIN QUERY PLAN {}",
+        crate::source_root_ocr_claim_fence::claim_candidate_jobs_sql()
+    );
+    let queue_plan = store
+        .connection
+        .borrow()
+        .prepare(&queue_query)
+        .unwrap()
+        .query_map(
+            rusqlite::named_params! {":candidate_limit": 256_i64},
+            |row| row.get::<_, String>(3),
+        )
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        queue_plan.iter().any(|detail| {
+            detail.contains("SCAN job USING INDEX ingest_job_ocr_claim_queue_idx")
+        }),
+        "{queue_plan:?}"
+    );
+    assert!(
+        queue_plan
+            .iter()
+            .all(|detail| !detail.contains("USE TEMP B-TREE")),
+        "{queue_plan:?}"
+    );
 }
 
 #[test]
@@ -273,8 +302,29 @@ fn v38_running_ocr_job_reopens_without_authority_then_reclaims_with_v39_fence() 
             .status,
         IngestJobStatus::Interrupted
     );
+    store
+        .begin_source_root_deletion(&root.id, UnixTimestamp::from_unix_seconds(1_800_500_903))
+        .unwrap();
+    force_receipt_phase(&store, &root.id, "future");
+    let interrupted = store
+        .ingest_job_by_id(&legacy_claim.job.id)
+        .unwrap()
+        .unwrap();
+    let error = store
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_500_904))
+        .unwrap_err();
+    assert_eq!(error.class(), MetaStoreErrorClass::InvalidValue);
+    assert_eq!(
+        store.ingest_job_by_id(&legacy_claim.job.id).unwrap(),
+        Some(interrupted)
+    );
+    assert_eq!(
+        store.ocr_job_discard_reason(&legacy_claim.job.id).unwrap(),
+        None
+    );
+    force_receipt_phase(&store, &root.id, "failed");
     let reclaimed = store
-        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_500_903))
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_500_905))
         .unwrap()
         .unwrap();
     assert!(
