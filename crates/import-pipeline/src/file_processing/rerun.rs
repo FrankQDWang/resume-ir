@@ -7,7 +7,8 @@ use resume_classifier::LinearPromotionPolicy;
 use sectionizer::Sectionizer;
 
 use super::model::{
-    ExactRerunDecision, PendingSearchableDocument, PendingSearchablePublicationKind,
+    ExactRerunDecision, PendingExistingDocument, PendingSearchableCommitRoute,
+    PendingSearchableDocument, PendingSearchablePublicationKind,
 };
 use crate::search_artifacts::index_document_from_resume_version;
 use crate::source_dispositions::ProcessedFile;
@@ -23,7 +24,7 @@ pub(crate) fn exact_rerun_decision(
     linear_promotion: &LinearPromotionPolicy,
     now: UnixTimestamp,
 ) -> Result<Option<ExactRerunDecision>> {
-    let Some(mut document) = store
+    let Some(document) = store
         .document_by_id(&file.document_id)
         .map_err(ImportPipelineError::store)?
     else {
@@ -92,9 +93,6 @@ pub(crate) fn exact_rerun_decision(
                     resume_version_id: version.id,
                 }));
             };
-            store
-                .upsert_document(&projected_document)
-                .map_err(ImportPipelineError::store)?;
             let mentions = store
                 .entity_mentions_for_version(&version.id)
                 .map_err(ImportPipelineError::store)?;
@@ -115,12 +113,13 @@ pub(crate) fn exact_rerun_decision(
                     phone_hash: None,
                     index_document,
                     publication_kind: PendingSearchablePublicationKind::MetadataChanged,
-                    source_occurrence: None,
+                    commit_route: PendingSearchableCommitRoute::Uncommitted,
+                    source_revalidation: None,
                 }),
             }))
         }
         DocumentStatus::OcrRequired => {
-            update_nonprojected_document_metadata(store, &mut document, file, now)?;
+            let document = existing_document_metadata(document, file, now);
             let Some(triage) = store
                 .source_revision_triage(&source_revision.id, source_triage_epoch.as_str())
                 .map_err(ImportPipelineError::store)?
@@ -137,12 +136,12 @@ pub(crate) fn exact_rerun_decision(
                 .map_err(ImportPipelineError::store)?;
             Ok(job.as_ref().is_some_and(ocr_job_is_actionable).then_some(
                 ExactRerunDecision::UnchangedOcrRequired {
+                    document,
                     source_revision_id: source_revision.id,
                 },
             ))
         }
         DocumentStatus::Excluded => {
-            update_nonprojected_document_metadata(store, &mut document, file, now)?;
             let mut matching = store
                 .resume_versions_for_document(&document.id)
                 .map_err(ImportPipelineError::store)?
@@ -173,8 +172,9 @@ pub(crate) fn exact_rerun_decision(
             {
                 return Ok(None);
             }
+            let document = existing_document_metadata(document, file, now);
             Ok(Some(ExactRerunDecision::UnchangedExcluded {
-                document: Box::new(document),
+                document,
                 source_revision_id: source_revision.id,
                 resume_version_id: version.id,
             }))
@@ -195,9 +195,13 @@ pub(crate) fn processed_file_from_exact(decision: ExactRerunDecision) -> Process
         ExactRerunDecision::MetadataChangedSearchable { pending } => {
             ProcessedFile::Searchable { pending }
         }
-        ExactRerunDecision::UnchangedOcrRequired { source_revision_id } => {
-            ProcessedFile::UnchangedOcrRequired { source_revision_id }
-        }
+        ExactRerunDecision::UnchangedOcrRequired {
+            document,
+            source_revision_id,
+        } => ProcessedFile::UnchangedOcrRequired {
+            document,
+            source_revision_id,
+        },
         ExactRerunDecision::UnchangedExcluded {
             document,
             source_revision_id,
@@ -232,28 +236,25 @@ fn changed_projected_document(
     Some(changed)
 }
 
-fn update_nonprojected_document_metadata(
-    store: &OwnedMetaStore,
-    document: &mut meta_store::Document,
+fn existing_document_metadata(
+    mut document: meta_store::Document,
     file: &DiscoveredFile,
     now: UnixTimestamp,
-) -> Result<()> {
+) -> PendingExistingDocument {
     let source_uri = format!("file://{}", file.normalized_path.as_str());
     if document.source_uri == source_uri
         && document.normalized_path == file.normalized_path.as_str()
         && document.file_name == file.file_name
         && document.mtime == file.mtime
     {
-        return Ok(());
+        return PendingExistingDocument::Unchanged(Box::new(document));
     }
     document.source_uri = source_uri;
     document.normalized_path = file.normalized_path.as_str().to_string();
     document.file_name = file.file_name.clone();
     document.mtime = file.mtime;
     document.updated_at = now;
-    store
-        .upsert_document(document)
-        .map_err(ImportPipelineError::store)
+    PendingExistingDocument::MetadataChanged(Box::new(document))
 }
 
 pub(crate) fn classification_epoch_matches(expected: &str, actual: &str) -> bool {

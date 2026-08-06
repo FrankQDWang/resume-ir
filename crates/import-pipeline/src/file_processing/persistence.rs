@@ -4,15 +4,17 @@ use core_domain::EntityMentionId;
 use extractor_rules::{extract_strong_fields, FieldType, RuleEvidenceKind, RuleMatch};
 use index_fulltext::IndexDocument;
 use meta_store::{
-    ContactHash, Document, DocumentStatus, EntityMention, EntityType, OwnedMetaStore,
-    ResumeVersion, ResumeVersionId, SourceRevision, UnixTimestamp,
+    ContactHash, Document, DocumentStatus, EntityMention, EntityType, ResumeVersion,
+    ResumeVersionId, SourceRevision, UnixTimestamp,
 };
 use privacy::{ContactHasher, ContactKind};
 use resume_classifier::LinearPromotionPolicy;
 
-use super::model::{PendingSearchableDocument, PendingSearchablePublicationKind};
+use super::model::{
+    PendingClassifiedDocument, PendingSearchableCommitRoute, PendingSearchableDocument,
+    PendingSearchablePublicationKind, PendingSourceTriageDocument,
+};
 use crate::classification::AdmissionDecision;
-use crate::immutable_ingest::{self, StagedDerivedData, StagedResume};
 use crate::processing_contract::current_source_triage_epoch;
 use crate::source_dispositions::ProcessedFile;
 use crate::{ImportPipelineError, Result};
@@ -90,84 +92,55 @@ pub(crate) fn prepare_pending_searchable_document(
             phone_hash,
             index_document,
             publication_kind: PendingSearchablePublicationKind::Replacement,
-            source_occurrence: None,
+            commit_route: PendingSearchableCommitRoute::Uncommitted,
+            source_revalidation: None,
         }),
     })
 }
 
-pub(crate) fn persist_non_searchable(
-    store: &OwnedMetaStore,
-    document: &Document,
-    source_revision: &SourceRevision,
-    version: &ResumeVersion,
+pub(crate) fn prepare_non_searchable(
+    document: Document,
+    source_revision: SourceRevision,
+    version: ResumeVersion,
     decision: AdmissionDecision,
     now: UnixTimestamp,
-) -> Result<()> {
+) -> ProcessedFile {
     let classification = decision.into_version_classification(version.id.clone(), now);
-    immutable_ingest::stage(
-        store,
-        StagedResume {
+    ProcessedFile::Excluded {
+        pending: Box::new(PendingClassifiedDocument {
             document,
             source_revision,
-            derived: StagedDerivedData::ClassifiedVersion {
-                version,
-                classification: &classification,
-                mentions: &[],
-                email_hash: None,
-                phone_hash: None,
-            },
-        },
-    )
-    .map_err(ImportPipelineError::store)
-}
-
-pub(crate) fn persist_document_failure_without_revision(
-    store: &OwnedMetaStore,
-    document: &Document,
-) -> Result<()> {
-    let has_active_projection = store
-        .active_search_projection_for_document(&document.id)
-        .map_err(ImportPipelineError::store)?
-        .is_some();
-    if has_active_projection {
-        return Ok(());
+            classification,
+            version,
+        }),
     }
-    store
-        .upsert_document(document)
-        .map_err(ImportPipelineError::store)
 }
 
-pub(crate) fn persist_source_revision_failure(
-    store: &OwnedMetaStore,
-    document: &Document,
-    source_revision: &SourceRevision,
+pub(crate) fn prepare_source_revision_failure(
+    document: Document,
+    source_revision: SourceRevision,
     now: UnixTimestamp,
     linear_promotion: &LinearPromotionPolicy,
-) -> Result<()> {
+) -> Result<PendingSourceTriageDocument> {
     let triage_epoch = current_source_triage_epoch(linear_promotion)?;
     let triage = AdmissionDecision::failed(linear_promotion).into_source_triage(
         source_revision.id.clone(),
         &triage_epoch,
         now,
     );
-    immutable_ingest::stage(
-        store,
-        StagedResume {
-            document,
-            source_revision,
-            derived: StagedDerivedData::SourceTriage(&triage),
-        },
-    )
-    .map_err(ImportPipelineError::store)
+    Ok(PendingSourceTriageDocument {
+        document,
+        source_revision,
+        triage,
+    })
 }
 
-pub(crate) fn mark_ocr_required_and_enqueue(
-    store: &OwnedMetaStore,
-    document: &mut Document,
-    source_revision: &SourceRevision,
+pub(crate) fn prepare_ocr_required(
+    mut document: Document,
+    source_revision: SourceRevision,
     now: UnixTimestamp,
     linear_promotion: &LinearPromotionPolicy,
-) -> Result<bool> {
+) -> Result<ProcessedFile> {
     document.status = DocumentStatus::OcrRequired;
     document.updated_at = now;
     let triage_epoch = current_source_triage_epoch(linear_promotion)?;
@@ -176,20 +149,13 @@ pub(crate) fn mark_ocr_required_and_enqueue(
         &triage_epoch,
         now,
     );
-    immutable_ingest::stage(
-        store,
-        StagedResume {
+    Ok(ProcessedFile::OcrRequired {
+        pending: Box::new(PendingSourceTriageDocument {
             document,
             source_revision,
-            derived: StagedDerivedData::SourceTriage(&triage),
-        },
-    )
-    .map_err(ImportPipelineError::store)?;
-    let enqueue = store
-        .enqueue_ocr_job_for_source_triage(&source_revision.id, &triage_epoch, now)
-        .map_err(ImportPipelineError::store)?;
-
-    Ok(enqueue.scheduled)
+            triage,
+        }),
+    })
 }
 
 pub(crate) fn entity_mentions_from_rules(
@@ -288,7 +254,7 @@ mod source_triage_contract_tests {
         store.run_migrations().unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_210_100);
         let content_hash = ContentDigest::from_bytes(b"synthetic parser routing change");
-        let mut document = Document {
+        let document = Document {
             id: DocumentId::from_non_secret_parts(&["source-triage-processing-contract-identity"]),
             source_uri: "file:///fixture/synthetic.pdf".to_string(),
             normalized_path: "/fixture/synthetic.pdf".to_string(),
@@ -322,9 +288,24 @@ mod source_triage_contract_tests {
 
         let promotion = LinearPromotionPolicy::default();
         let current_epoch = current_source_triage_epoch(&promotion).unwrap();
-        let queued =
-            mark_ocr_required_and_enqueue(&store, &mut document, &source_revision, now, &promotion)
-                .unwrap();
+        let ProcessedFile::OcrRequired { pending } =
+            prepare_ocr_required(document, source_revision.clone(), now, &promotion).unwrap()
+        else {
+            panic!("OCR preparation must return an OCR-required mutation");
+        };
+        store
+            .stage_immutable_ingest(ImmutableIngestStage::SourceTriage {
+                document: &pending.document,
+                source_revision: &pending.source_revision,
+                triage: &pending.triage,
+            })
+            .unwrap();
+        let current_epoch_value =
+            meta_store::SourceTriageEpoch::parse(&pending.triage.triage_epoch).unwrap();
+        let queued = store
+            .enqueue_ocr_job_for_source_triage(&source_revision.id, &current_epoch_value, now)
+            .unwrap()
+            .scheduled;
 
         assert!(queued);
         assert_eq!(

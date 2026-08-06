@@ -61,8 +61,6 @@ pub use data_directory_owner::{
 };
 #[cfg(test)]
 use file_processing::classify_language_set;
-#[cfg(test)]
-use file_processing::persist_source_revision_failure;
 pub(crate) use file_processing::{
     contact_hashes_from_mentions, entity_mentions_from_rules, language_set, sections_to_index,
 };
@@ -70,7 +68,9 @@ pub(crate) use file_processing::{
 use file_processing::{
     process_file, recv_parse_result_with_cancel_poll, ParseWorkOutcome, ParseWorkResult,
 };
-pub(crate) use file_processing::{PendingSearchableDocument, PendingSearchablePublicationKind};
+pub(crate) use file_processing::{
+    PendingSearchableCommitRoute, PendingSearchableDocument, PendingSearchablePublicationKind,
+};
 #[cfg(test)]
 use immutable_ingest::{resume_version, StagedDerivedData, StagedResume};
 pub(crate) use import_run::current_timestamp_or;
@@ -1332,10 +1332,10 @@ mod tests {
         ImportOptions, ImportParseWorkers, ImportPipelineError, ImportPipelineErrorClass,
         ImportPipelineErrorKind, ImportResourcePolicy, ImportStageTimings, ImportSummary,
         ImportWorkerMetrics, IndexDocument, IndexSection, OcrTextIndexOutcome, ParseWorkOutcome,
-        ParseWorkResult, PendingProjectionRemovals, PendingSearchableDocument,
-        PendingSearchablePublicationKind, PipelineRunControl, ProcessedFile,
-        SearchGenerationHandoff, SearchGenerationPublicationDisposition, SearchProjectionRemoval,
-        SearchProjectionRemovalReason, SearchPublicationEmbeddingFailure,
+        ParseWorkResult, PendingProjectionRemovals, PendingSearchableCommitRoute,
+        PendingSearchableDocument, PendingSearchablePublicationKind, PipelineRunControl,
+        ProcessedFile, SearchGenerationHandoff, SearchGenerationPublicationDisposition,
+        SearchProjectionRemoval, SearchProjectionRemovalReason, SearchPublicationEmbeddingFailure,
         SearchPublicationEmbeddingInput, SearchPublicationEmbeddingOutput,
         SearchPublicationTelemetrySnapshot, SearchPublicationVectorization,
         SearchPublicationVectorizer, Sectionizer, SnapshotPublishPhase, BYTES_PER_GIB,
@@ -4282,7 +4282,8 @@ mod tests {
             phone_hash: None,
             index_document,
             publication_kind: PendingSearchablePublicationKind::Replacement,
-            source_occurrence: None,
+            commit_route: PendingSearchableCommitRoute::MigrationRebuildPrepared,
+            source_revalidation: None,
         }
     }
 
@@ -4768,6 +4769,7 @@ mod tests {
         let error = finish_import_file(
             &store,
             &task.id,
+            store.import_task_purpose(&task.id).unwrap(),
             now,
             &|| Ok(()),
             &mut summary,
@@ -5296,7 +5298,7 @@ mod tests {
         assert!(matches!(processed, ProcessedFile::Excluded { .. }));
         assert_eq!(
             store.document_by_id(&document_id).unwrap().unwrap().status,
-            DocumentStatus::Excluded
+            DocumentStatus::Searchable
         );
         assert!(store
             .active_search_projection_for_document(&document_id)
@@ -5463,6 +5465,118 @@ mod tests {
             ContentDigest::from_bytes(b"abc").as_str(),
             "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn configured_import_commit_rejects_deletion_without_leaving_staged_rows() {
+        let temp = TestDir::new("root-bound-import-deletion-race");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("synthetic-not-resume.txt"),
+            b"synthetic grocery list",
+        )
+        .unwrap();
+
+        let store = create_test_store(&data_dir);
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_700);
+        let source_root = store
+            .register_source_root(
+                root.to_str().unwrap(),
+                root.to_str().unwrap(),
+                "Synthetic root-bound commit root",
+                now,
+            )
+            .unwrap();
+        let contract =
+            super::current_import_processing_contract(&ImportOptions::default()).unwrap();
+        store
+            .activate_migration_rebuild_contract(&contract, now)
+            .unwrap();
+        let running = import_task("root-bound-import-task", root.to_str().unwrap(), now);
+        let queued = ImportTask {
+            status: ImportTaskStatus::Queued,
+            started_at: None,
+            ..running.clone()
+        };
+        let scope = import_scan_scope(&queued, None);
+        store
+            .begin_scan(
+                &source_root.id,
+                queued.id.as_str(),
+                meta_store::ScanTrigger::Manual,
+                now,
+            )
+            .unwrap();
+        store
+            .insert_import_task_with_scan_scope(&queued, &scope, &contract)
+            .unwrap();
+        assert_eq!(
+            store.import_task_purpose(&queued.id).unwrap(),
+            ImportTaskPurpose::ConfiguredCatchUp
+        );
+
+        let file = crawl_directory(&root).unwrap().files.remove(0);
+        let mut stage_timings = ImportStageTimings::default();
+        let mut worker_metrics = ImportWorkerMetrics::default();
+        let mut content_bytes_read = 0;
+        let mut io_metrics = crate::ImportIoMetrics::default();
+        let (processed, verification) = process_file(
+            &data_dir,
+            &store,
+            &queued.id,
+            &file,
+            &Sectionizer::default(),
+            now,
+            &|| Ok(()),
+            &mut stage_timings,
+            &mut worker_metrics,
+            &mut content_bytes_read,
+            &mut io_metrics,
+            &LinearPromotionPolicy::default(),
+        )
+        .unwrap();
+        assert_eq!(store.document_by_id(&file.document_id).unwrap(), None);
+
+        store
+            .begin_source_root_deletion(
+                &source_root.id,
+                UnixTimestamp::from_unix_seconds(now.as_unix_seconds() + 1),
+            )
+            .unwrap();
+        let mut summary = ImportSummary {
+            files_discovered: 1,
+            ..ImportSummary::default()
+        };
+        let mut dispositions =
+            super::ImportDispositionBatches::new(queued.id.clone(), contract.id().clone());
+        let result = finish_import_file(
+            &store,
+            &queued.id,
+            ImportTaskPurpose::ConfiguredCatchUp,
+            now,
+            &|| Ok(()),
+            &mut summary,
+            &mut Vec::new(),
+            &mut PendingProjectionRemovals::default(),
+            &mut dispositions,
+            &mut CurrentImportDocumentCache::default(),
+            &|_| {},
+            Instant::now(),
+            H2_INDEX_WRITER_HEAP_BYTES,
+            &SearchPublicationVectorization::default(),
+            0,
+            1,
+            &file,
+            processed,
+            verification,
+            None,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(store.document_by_id(&file.document_id).unwrap(), None);
     }
 
     #[test]
@@ -6156,9 +6270,42 @@ mod tests {
             ));
             store.upsert_import_scan_scope(scope).unwrap();
         } else {
-            store
-                .insert_import_task_with_scan_scope(&queued_task, scope, &contract)
-                .unwrap();
+            let root = store
+                .source_root_by_canonical_path(&task.root_path)
+                .unwrap()
+                .unwrap_or_else(|| {
+                    store
+                        .register_source_root(
+                            &task.root_path,
+                            &task.root_path,
+                            "Synthetic import-pipeline test root",
+                            task.updated_at,
+                        )
+                        .unwrap()
+                });
+            let existing_snapshot = store.latest_scan_snapshot(&root.id).unwrap();
+            if existing_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.id == task.id.as_str())
+            {
+                store
+                    .insert_import_task_with_scan_scope(&queued_task, scope, &contract)
+                    .unwrap();
+            } else {
+                assert!(matches!(
+                    store
+                        .coordinate_source_root_scan(
+                            &root.id,
+                            meta_store::ScanTrigger::Manual,
+                            &queued_task,
+                            scope,
+                            &contract,
+                            task.updated_at,
+                        )
+                        .unwrap(),
+                    meta_store::SourceRootScanCoordination::Started { .. }
+                ));
+            }
         }
         let claimed = store
             .claim_observed_import_task_for_worker(&queued_task, task.updated_at)

@@ -1,9 +1,13 @@
 use meta_store::{
-    Document, DocumentId, ImportProcessingContractId, ImportSourceDispositionKind, ImportTaskId,
+    DocumentId, ImportProcessingContractId, ImportSourceDispositionKind, ImportTaskId,
     ImportTaskSourceDisposition, OwnedMetaStore, ResumeVersionId, SourceRevisionId,
 };
 
-use super::{ImportFailureKind, ImportPipelineError, PendingSearchableDocument, Result};
+use crate::file_processing::{
+    PendingClassifiedDocument, PendingExistingDocument, PendingSearchableDocument,
+    PendingSourceTriageDocument,
+};
+use crate::{ImportFailureKind, ImportPipelineError, Result};
 
 pub(super) enum ProcessedFile {
     Searchable {
@@ -14,25 +18,23 @@ pub(super) enum ProcessedFile {
         resume_version_id: ResumeVersionId,
     },
     UnchangedOcrRequired {
+        document: PendingExistingDocument,
         source_revision_id: SourceRevisionId,
     },
     UnchangedExcluded {
-        document: Box<Document>,
+        document: PendingExistingDocument,
         source_revision_id: SourceRevisionId,
         resume_version_id: ResumeVersionId,
     },
     Excluded {
-        document: Box<Document>,
-        source_revision_id: SourceRevisionId,
-        resume_version_id: ResumeVersionId,
+        pending: Box<PendingClassifiedDocument>,
     },
     OcrRequired {
-        ocr_job_queued: bool,
-        source_revision_id: SourceRevisionId,
+        pending: Box<PendingSourceTriageDocument>,
     },
     Failed {
         kind: ImportFailureKind,
-        source_revision_id: Option<SourceRevisionId>,
+        pending: Option<Box<PendingSourceTriageDocument>>,
     },
 }
 
@@ -66,7 +68,9 @@ impl ProcessedFile {
                 Some(resume_version_id.clone()),
                 ImportSourceDispositionKind::Searchable,
             ),
-            Self::UnchangedOcrRequired { source_revision_id } => (
+            Self::UnchangedOcrRequired {
+                source_revision_id, ..
+            } => (
                 source_revision_id.clone(),
                 None,
                 ImportSourceDispositionKind::OcrBacklog,
@@ -75,35 +79,32 @@ impl ProcessedFile {
                 source_revision_id,
                 resume_version_id,
                 ..
-            }
-            | Self::Excluded {
-                source_revision_id,
-                resume_version_id,
-                ..
             } => (
                 source_revision_id.clone(),
                 Some(resume_version_id.clone()),
                 ImportSourceDispositionKind::Excluded,
             ),
-            Self::OcrRequired {
-                source_revision_id, ..
-            } => (
-                source_revision_id.clone(),
+            Self::Excluded { pending } => (
+                pending.source_revision.id.clone(),
+                Some(pending.version.id.clone()),
+                ImportSourceDispositionKind::Excluded,
+            ),
+            Self::OcrRequired { pending } => (
+                pending.source_revision.id.clone(),
                 None,
                 ImportSourceDispositionKind::OcrBacklog,
             ),
             Self::Failed {
-                source_revision_id: Some(source_revision_id),
+                pending: Some(pending),
                 ..
             } => (
-                source_revision_id.clone(),
+                pending.source_revision.id.clone(),
                 None,
                 ImportSourceDispositionKind::Failed,
             ),
-            Self::Failed {
-                source_revision_id: None,
-                ..
-            } => return Err(ImportPipelineError::migration_scan_incomplete()),
+            Self::Failed { pending: None, .. } => {
+                return Err(ImportPipelineError::migration_scan_incomplete())
+            }
         };
         Ok(ImportTaskSourceDisposition {
             source_ordinal,

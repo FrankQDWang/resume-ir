@@ -1148,75 +1148,16 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
-        let previous = transaction
-            .query_row(
-                "SELECT document_id, source_revision_id, state
-                 FROM source_occurrence
-                 WHERE root_id = ?1 AND relative_path = ?2",
-                params![root_id.as_str(), relative_path],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(MetaStoreError::storage)?;
-        let change = match previous.as_ref() {
-            None => OccurrenceChange::Inserted,
-            Some((old_document, old_revision, state))
-                if old_document == document_id.as_str()
-                    && old_revision == source_revision_id.as_str()
-                    && state == "present" =>
-            {
-                OccurrenceChange::Unchanged
-            }
-            Some(_) => OccurrenceChange::Replaced,
-        };
-        transaction
-            .execute(
-                "INSERT INTO source_occurrence (
-                    root_id, relative_path, document_id, source_revision_id,
-                    state, first_seen_scan_id, last_seen_scan_id,
-                    observed_at_seconds, removed_at_seconds
-                 ) VALUES (?1, ?2, ?3, ?4, 'present', ?5, ?5, ?6, NULL)
-                 ON CONFLICT(root_id, relative_path) DO UPDATE SET
-                    document_id = excluded.document_id,
-                    source_revision_id = excluded.source_revision_id,
-                    state = 'present',
-                    last_seen_scan_id = excluded.last_seen_scan_id,
-                    observed_at_seconds = excluded.observed_at_seconds,
-                    removed_at_seconds = NULL",
-                params![
-                    root_id.as_str(),
-                    relative_path,
-                    document_id.as_str(),
-                    source_revision_id.as_str(),
-                    scan_id,
-                    now.as_unix_seconds()
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-        transaction
-            .execute(
-                "INSERT OR IGNORE INTO source_occurrence_revision (
-                    root_id, relative_path, source_revision_id, observed_at_seconds
-                 ) VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    root_id.as_str(),
-                    relative_path,
-                    source_revision_id.as_str(),
-                    now.as_unix_seconds()
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-        if let Some((old_document, _, _)) = previous {
-            if old_document != document_id.as_str() {
-                tombstone_unreferenced_document(&transaction, &old_document, now)?;
-            }
-        }
+        let change =
+            super::source_root_bound_import_commit::observe_source_occurrence_in_connection(
+                &transaction,
+                root_id,
+                relative_path,
+                document_id,
+                source_revision_id,
+                scan_id,
+                now,
+            )?;
         transaction.commit().map_err(MetaStoreError::storage)?;
         Ok(change)
     }
@@ -1395,7 +1336,11 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             .map_err(MetaStoreError::storage)?;
         let mut removed = Vec::new();
         for id in stale {
-            tombstone_unreferenced_document(&transaction, &id, now)?;
+            super::source_root_bound_import_commit::tombstone_unreferenced_document(
+                &transaction,
+                &id,
+                now,
+            )?;
             removed.push(
                 DocumentId::from_str(&id)
                     .map_err(|_| MetaStoreError::invalid_value("document.id"))?,
@@ -1774,27 +1719,6 @@ fn update_completed_snapshot(
     Ok(())
 }
 
-fn tombstone_unreferenced_document(
-    connection: &Connection,
-    document_id: &str,
-    now: UnixTimestamp,
-) -> Result<()> {
-    connection
-        .execute(
-            "UPDATE document
-             SET is_deleted = 1, status = 'deleted',
-                 updated_at_seconds = MAX(updated_at_seconds, ?2)
-             WHERE id = ?1
-               AND NOT EXISTS (
-                    SELECT 1 FROM source_occurrence
-                    WHERE document_id = ?1 AND state = 'present'
-               )",
-            params![document_id, now.as_unix_seconds()],
-        )
-        .map_err(MetaStoreError::storage)?;
-    Ok(())
-}
-
 fn validate_canonical_path(value: &str) -> Result<()> {
     let path = Path::new(value);
     if value.is_empty()
@@ -1813,7 +1737,7 @@ fn validate_canonical_path(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_relative_path(value: &str) -> Result<()> {
+pub(super) fn validate_relative_path(value: &str) -> Result<()> {
     if value.is_empty()
         || value.len() > MAX_RELATIVE_PATH_BYTES
         || value.starts_with('/')

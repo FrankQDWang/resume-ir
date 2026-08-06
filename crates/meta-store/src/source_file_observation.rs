@@ -98,60 +98,73 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     where
         Access: MetadataStoreWriteAccess,
     {
-        validate_observation(observation)?;
         let Some((root, relative_path)) =
             self.source_root_and_relative_path_for_import_task(task_id, normalized_path)?
         else {
             return Ok(());
         };
-        let changed = self
-            .connection
-            .borrow_mut()
-            .execute(
-                "INSERT INTO source_file_observation (
-                    root_id, relative_path, source_revision_id, assurance_kind,
-                    stable_file_id, byte_size, mtime_seconds, mtime_nanoseconds,
-                    ctime_seconds, ctime_nanoseconds, strongly_verified_at_seconds,
-                    next_strong_verification_at_seconds
-                 )
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
-                 FROM source_occurrence
-                 WHERE root_id = ?1 AND relative_path = ?2
-                   AND source_revision_id = ?3 AND state = 'present'
-                 ON CONFLICT(root_id, relative_path) DO UPDATE SET
-                    source_revision_id = excluded.source_revision_id,
-                    assurance_kind = excluded.assurance_kind,
-                    stable_file_id = excluded.stable_file_id,
-                    byte_size = excluded.byte_size,
-                    mtime_seconds = excluded.mtime_seconds,
-                    mtime_nanoseconds = excluded.mtime_nanoseconds,
-                    ctime_seconds = excluded.ctime_seconds,
-                    ctime_nanoseconds = excluded.ctime_nanoseconds,
-                    strongly_verified_at_seconds = excluded.strongly_verified_at_seconds,
-                    next_strong_verification_at_seconds =
-                        excluded.next_strong_verification_at_seconds",
-                params![
-                    root.id.as_str(),
-                    relative_path,
-                    observation.source_revision_id.as_str(),
-                    SOURCE_FILE_OBSERVATION_ASSURANCE,
-                    observation.stable_file_id,
-                    i64::try_from(observation.byte_size)
-                        .map_err(|_| MetaStoreError::invalid_value("observation.byte_size"))?,
-                    observation.mtime_seconds,
-                    observation.mtime_nanoseconds,
-                    observation.ctime_seconds,
-                    observation.ctime_nanoseconds,
-                    observation.strongly_verified_at.as_unix_seconds(),
-                    observation.next_strong_verification_at.as_unix_seconds(),
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-        if changed != 1 {
-            return Err(MetaStoreError::storage_invariant());
-        }
-        Ok(())
+        let connection = self.connection.borrow_mut();
+        record_strong_source_file_observation_in_connection(
+            &connection,
+            &root.id,
+            &relative_path,
+            observation,
+        )
     }
+}
+
+pub(super) fn record_strong_source_file_observation_in_connection(
+    connection: &rusqlite::Connection,
+    root_id: &crate::SourceRootId,
+    relative_path: &str,
+    observation: &StrongSourceFileObservation,
+) -> Result<()> {
+    validate_observation(observation)?;
+    let changed = connection
+        .execute(
+            "INSERT INTO source_file_observation (
+                root_id, relative_path, source_revision_id, assurance_kind,
+                stable_file_id, byte_size, mtime_seconds, mtime_nanoseconds,
+                ctime_seconds, ctime_nanoseconds, strongly_verified_at_seconds,
+                next_strong_verification_at_seconds
+             )
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
+             FROM source_occurrence
+             WHERE root_id = ?1 AND relative_path = ?2
+               AND source_revision_id = ?3 AND state = 'present'
+             ON CONFLICT(root_id, relative_path) DO UPDATE SET
+                source_revision_id = excluded.source_revision_id,
+                assurance_kind = excluded.assurance_kind,
+                stable_file_id = excluded.stable_file_id,
+                byte_size = excluded.byte_size,
+                mtime_seconds = excluded.mtime_seconds,
+                mtime_nanoseconds = excluded.mtime_nanoseconds,
+                ctime_seconds = excluded.ctime_seconds,
+                ctime_nanoseconds = excluded.ctime_nanoseconds,
+                strongly_verified_at_seconds = excluded.strongly_verified_at_seconds,
+                next_strong_verification_at_seconds =
+                    excluded.next_strong_verification_at_seconds",
+            params![
+                root_id.as_str(),
+                relative_path,
+                observation.source_revision_id.as_str(),
+                SOURCE_FILE_OBSERVATION_ASSURANCE,
+                observation.stable_file_id,
+                i64::try_from(observation.byte_size)
+                    .map_err(|_| MetaStoreError::invalid_value("observation.byte_size"))?,
+                observation.mtime_seconds,
+                observation.mtime_nanoseconds,
+                observation.ctime_seconds,
+                observation.ctime_nanoseconds,
+                observation.strongly_verified_at.as_unix_seconds(),
+                observation.next_strong_verification_at.as_unix_seconds(),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    if changed != 1 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    Ok(())
 }
 
 fn source_file_observation_from_row(

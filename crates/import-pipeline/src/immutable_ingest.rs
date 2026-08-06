@@ -1,7 +1,6 @@
 use meta_store::{
     ContactHash, ContentDigest, Document, EntityMention, ImmutableIngestStage, OwnedMetaStore,
     Result, ResumeVersion, ResumeVersionClassification, ResumeVersionId, SourceRevision,
-    SourceRevisionTriage,
 };
 
 /// Immutable parse-derived data staged before an index generation is published.
@@ -15,7 +14,6 @@ pub(super) struct StagedResume<'a> {
 }
 
 pub(super) enum StagedDerivedData<'a> {
-    SourceTriage(&'a SourceRevisionTriage),
     ClassifiedVersion {
         version: &'a ResumeVersion,
         classification: &'a ResumeVersionClassification,
@@ -68,11 +66,6 @@ pub(super) fn resume_version(
 
 pub(super) fn stage(store: &OwnedMetaStore, staged: StagedResume<'_>) -> Result<()> {
     let stage = match staged.derived {
-        StagedDerivedData::SourceTriage(triage) => ImmutableIngestStage::SourceTriage {
-            document: staged.document,
-            source_revision: staged.source_revision,
-            triage,
-        },
         StagedDerivedData::ClassifiedVersion {
             version,
             classification,

@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_active",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "accepted",
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "3bcb559d61422d0fe6e9273b0db46f713798c97dbd80a723ccff1eb76e4fc0ba",
@@ -10,7 +10,7 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "18012ae7e69e1dd0bc80da224714dc64020b7994"
+    "git_head_sha": "b21161e4a8102cabc1d5524a0f7d7d29374b85cf"
   },
   "current_slice": "#451 atomic source-root-bound import commit",
   "hypothesis": {
@@ -18,11 +18,31 @@
     "acceptance_cell": "w0_docs",
     "expected_effect": "every configured import-run database producer with persisted task identity commits immutable data, root ownership, optional strong observation and optional OCR work atomically under the existing durable source-root binding fence",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/451",
-    "after_measurement_ref": "pending",
+    "after_measurement_ref": "PROGRESS.md#issue-451-atomic-source-root-bound-import-commit",
     "reprofile_ref": "not_applicable_correctness_slice",
-    "decision": "pending"
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-451-atomic-source-root-bound-import-commit"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-451-atomic-source-root-bound-import-commit"
+    },
+    {
+      "from": "red_check_written",
+      "to": "implementation_active",
+      "evidence_ref": "PROGRESS.md#issue-451-atomic-source-root-bound-import-commit"
+    },
+    {
+      "from": "slice_active",
+      "to": "red_check_written",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/451"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",

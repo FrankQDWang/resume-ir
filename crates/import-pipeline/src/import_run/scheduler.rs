@@ -3,16 +3,14 @@ use std::path::Path;
 use std::time::Instant;
 
 use fs_crawler::DiscoveredFile;
-use meta_store::{ImportTaskId, OwnedMetaStore, UnixTimestamp};
+use meta_store::{ImportTaskId, ImportTaskPurpose, OwnedMetaStore, UnixTimestamp};
 use sectionizer::Sectionizer;
 
 use super::orchestrator::publish_import_progress;
-use crate::file_observation_fast_path::{
-    revalidate_discovered_observation, strong_store_observation,
-};
+use crate::file_observation_fast_path::revalidate_discovered_observation;
 use crate::file_processing::{
-    commit_parse_work_result, process_file, ImportFileResult, ParseWorkerClock,
-    PendingSearchableDocument, PendingSourceOccurrence,
+    commit_import_file, commit_parse_work_result, process_file, ImportFileResult, ParseWorkerClock,
+    PendingSearchableDocument, PendingSourceRevalidation,
 };
 use crate::publication_coordinator::{
     flush_pending_searchable_documents_with_handoff, PendingProjectionRemovals,
@@ -30,6 +28,7 @@ pub(super) fn commit_ready_import_file_results(
     data_dir: &Path,
     store: &OwnedMetaStore,
     task_id: &ImportTaskId,
+    purpose: ImportTaskPurpose,
     now: UnixTimestamp,
     ensure_not_cancelled: &dyn Fn() -> Result<()>,
     summary: &mut ImportSummary,
@@ -69,6 +68,7 @@ pub(super) fn commit_ready_import_file_results(
         finish_import_file(
             store,
             task_id,
+            purpose,
             now,
             ensure_not_cancelled,
             summary,
@@ -98,6 +98,7 @@ pub(super) fn process_files_sequential(
     data_dir: &Path,
     store: &OwnedMetaStore,
     task_id: &ImportTaskId,
+    purpose: ImportTaskPurpose,
     files: Vec<DiscoveredFile>,
     sectionizer: &Sectionizer,
     now: UnixTimestamp,
@@ -135,6 +136,7 @@ pub(super) fn process_files_sequential(
         finish_import_file(
             store,
             task_id,
+            purpose,
             now,
             ensure_not_cancelled,
             summary,
@@ -162,6 +164,7 @@ pub(super) fn process_indexed_files_sequential(
     data_dir: &Path,
     store: &OwnedMetaStore,
     task_id: &ImportTaskId,
+    purpose: ImportTaskPurpose,
     files: Vec<(usize, DiscoveredFile)>,
     sectionizer: &Sectionizer,
     now: UnixTimestamp,
@@ -199,6 +202,7 @@ pub(super) fn process_indexed_files_sequential(
         finish_import_file(
             store,
             task_id,
+            purpose,
             now,
             ensure_not_cancelled,
             summary,
@@ -225,6 +229,7 @@ pub(super) fn process_indexed_files_sequential(
 pub(crate) fn finish_import_file(
     store: &OwnedMetaStore,
     task_id: &ImportTaskId,
+    purpose: ImportTaskPurpose,
     now: UnixTimestamp,
     ensure_not_cancelled: &dyn Fn() -> Result<()>,
     summary: &mut ImportSummary,
@@ -239,7 +244,7 @@ pub(crate) fn finish_import_file(
     index: usize,
     total_files: usize,
     file: &DiscoveredFile,
-    processed: ProcessedFile,
+    mut processed: ProcessedFile,
     verification: ContentVerification,
     generation_handoff: Option<&dyn SearchGenerationHandoff>,
 ) -> Result<()> {
@@ -263,56 +268,57 @@ pub(crate) fn finish_import_file(
             .record_metadata_fallback(crate::ImportMetadataFallbackReason::ChangedDuringImport);
         return Err(ImportPipelineError::source_changed_during_import());
     }
+    set_cancel_phase(ImportCancelCheckPhase::DbWrite);
+    let commit_started = Instant::now();
+    let commit_outcome = commit_import_file(
+        store,
+        purpose,
+        task_id,
+        file,
+        &mut processed,
+        verification,
+        now,
+    )?;
+    summary.stage_timings.db += commit_started.elapsed();
     summary.processed_documents = summary.processed_documents.saturating_add(1);
-    if !matches!(&processed, ProcessedFile::Searchable { .. }) {
-        if let Some(disposition) = &disposition {
-            store
-                .observe_import_task_source_occurrence(
-                    task_id,
-                    file.normalized_path.as_str(),
-                    &file.document_id,
-                    &disposition.source_revision_id,
-                    now,
-                )
-                .map_err(ImportPipelineError::store)?;
-            if verification == ContentVerification::Strong {
-                let observed = file
-                    .observation
-                    .as_ref()
-                    .ok_or_else(ImportPipelineError::source_changed_during_import)?;
-                store
-                    .record_strong_source_file_observation(
-                        task_id,
-                        file.normalized_path.as_str(),
-                        &strong_store_observation(
-                            disposition.source_revision_id.clone(),
-                            observed,
-                            now,
-                        ),
-                    )
-                    .map_err(ImportPipelineError::store)?;
-                summary.io_metrics.strong_observations_persisted = summary
-                    .io_metrics
-                    .strong_observations_persisted
-                    .saturating_add(1);
-            }
-        }
+    if verification == ContentVerification::Strong
+        && !source_read_failed
+        && (purpose == meta_store::ImportTaskPurpose::ConfiguredCatchUp
+            || !matches!(&processed, ProcessedFile::Searchable { .. }))
+    {
+        summary.io_metrics.strong_observations_persisted = summary
+            .io_metrics
+            .strong_observations_persisted
+            .saturating_add(1);
     }
     match processed {
         ProcessedFile::Searchable { mut pending } => {
-            pending.source_occurrence = Some(PendingSourceOccurrence {
-                task_id: task_id.clone(),
-                normalized_path: file.normalized_path.as_str().to_string(),
-                observed_at: now,
-                strong_observation: (verification == ContentVerification::Strong)
-                    .then(|| file.observation.clone())
-                    .flatten(),
-            });
+            pending.source_revalidation = if purpose
+                == meta_store::ImportTaskPurpose::MigrationRebuildFullCorpus
+                || verification == ContentVerification::Strong
+            {
+                Some(PendingSourceRevalidation {
+                    task_id: task_id.clone(),
+                    normalized_path: file.normalized_path.as_str().to_string(),
+                    observed_at: now,
+                    strong_observation: if verification == ContentVerification::Strong {
+                        Some(
+                            file.observation
+                                .clone()
+                                .ok_or_else(ImportPipelineError::source_changed_during_import)?,
+                        )
+                    } else {
+                        None
+                    },
+                })
+            } else {
+                None
+            };
             pending_index_documents.push(*pending);
         }
-        ProcessedFile::OcrRequired { ocr_job_queued, .. } => {
+        ProcessedFile::OcrRequired { .. } => {
             summary.ocr_required_documents += 1;
-            if ocr_job_queued {
+            if commit_outcome.ocr_job_scheduled {
                 summary.ocr_jobs_queued += 1;
             }
         }
@@ -320,12 +326,12 @@ pub(crate) fn finish_import_file(
             summary.failed_documents += 1;
             summary.failure_counts.increment(kind);
         }
-        ProcessedFile::Excluded { document, .. } => {
+        ProcessedFile::Excluded { pending } => {
             schedule_permanent_exclusion_if_projected(
                 store,
                 pending_excluded_doc_ids,
                 file.document_id.clone(),
-                *document,
+                pending.document,
             )?;
         }
         ProcessedFile::UnchangedExcluded { document, .. } => {
@@ -333,7 +339,7 @@ pub(crate) fn finish_import_file(
                 store,
                 pending_excluded_doc_ids,
                 file.document_id.clone(),
-                *document,
+                document.document().clone(),
             )?;
         }
         ProcessedFile::UnchangedOcrRequired { .. } => {}

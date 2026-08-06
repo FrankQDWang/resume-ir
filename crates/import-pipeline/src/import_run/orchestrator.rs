@@ -43,6 +43,9 @@ pub(super) fn run_import(
     generation_handoff: Option<&dyn SearchGenerationHandoff>,
 ) -> Result<ImportSummary> {
     ensure_import_can_continue(store, &task.id, control)?;
+    let task_purpose = store
+        .import_task_purpose(&task.id)
+        .map_err(ImportPipelineError::store)?;
     let cancel_metrics = RefCell::new(CancelCheckMetrics::default());
     let cancel_poller = RefCell::new(ImportCancelPoller::new(Duration::from_millis(
         IMPORT_CANCEL_POLL_INTERVAL_MS,
@@ -202,6 +205,7 @@ pub(super) fn run_import(
             data_dir,
             store,
             &task.id,
+            task_purpose,
             files_to_process,
             now,
             &ensure_not_cancelled,
@@ -223,6 +227,7 @@ pub(super) fn run_import(
             data_dir,
             store,
             &task.id,
+            task_purpose,
             files_to_process,
             &sectionizer,
             now,

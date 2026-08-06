@@ -40,46 +40,54 @@ impl OwnedMetaStore {
     /// publication. Any validation, identity, or storage failure leaves none
     /// of the stage's rows behind.
     pub fn stage_immutable_ingest(&self, stage: ImmutableIngestStage<'_>) -> Result<()> {
-        validate_stage_relationships(&stage)?;
         let mut connection = self.connection.borrow_mut();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
-        match stage {
-            ImmutableIngestStage::SourceTriage {
-                document,
-                source_revision,
-                triage,
-            } => {
-                upsert_document_in_connection(&transaction, document)?;
-                insert_source_revision_in_connection(&transaction, source_revision)?;
-                insert_source_triage_decision_in_connection(&transaction, triage)?;
-            }
-            ImmutableIngestStage::ClassifiedResume {
-                document,
-                source_revision,
-                version,
-                classification,
-                mentions,
-                email_hash,
-                phone_hash,
-            } => {
-                upsert_document_in_connection(&transaction, document)?;
-                insert_source_revision_in_connection(&transaction, source_revision)?;
-                insert_resume_version_in_connection(&transaction, version)?;
-                insert_version_classification_decision_in_connection(&transaction, classification)?;
-                insert_entity_mentions_in_connection(&transaction, &version.id, mentions)?;
-                assign_candidate_from_hashed_contacts_in_connection(
-                    &transaction,
-                    &version.id,
-                    email_hash,
-                    phone_hash,
-                    UnixTimestamp::from_unix_seconds(0),
-                )?;
-            }
-        }
+        stage_immutable_ingest_in_connection(&transaction, stage)?;
         transaction.commit().map_err(MetaStoreError::storage)
     }
+}
+
+pub(super) fn stage_immutable_ingest_in_connection(
+    connection: &Connection,
+    stage: ImmutableIngestStage<'_>,
+) -> Result<()> {
+    validate_stage_relationships(&stage)?;
+    match stage {
+        ImmutableIngestStage::SourceTriage {
+            document,
+            source_revision,
+            triage,
+        } => {
+            upsert_document_in_connection(connection, document)?;
+            insert_source_revision_in_connection(connection, source_revision)?;
+            insert_source_triage_decision_in_connection(connection, triage)?;
+        }
+        ImmutableIngestStage::ClassifiedResume {
+            document,
+            source_revision,
+            version,
+            classification,
+            mentions,
+            email_hash,
+            phone_hash,
+        } => {
+            upsert_document_in_connection(connection, document)?;
+            insert_source_revision_in_connection(connection, source_revision)?;
+            insert_resume_version_in_connection(connection, version)?;
+            insert_version_classification_decision_in_connection(connection, classification)?;
+            insert_entity_mentions_in_connection(connection, &version.id, mentions)?;
+            assign_candidate_from_hashed_contacts_in_connection(
+                connection,
+                &version.id,
+                email_hash,
+                phone_hash,
+                UnixTimestamp::from_unix_seconds(0),
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_stage_relationships(stage: &ImmutableIngestStage<'_>) -> Result<()> {

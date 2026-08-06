@@ -3,8 +3,9 @@ use std::time::{Duration, Instant};
 use fs_crawler::DiscoveredFile;
 use index_fulltext::IndexDocument;
 use meta_store::{
-    ContactHash, Document, DocumentStatus, EntityMention, ImportTaskId, ResumeVersion,
-    ResumeVersionClassification, ResumeVersionId, SourceRevision, SourceRevisionId, UnixTimestamp,
+    ContactHash, Document, DocumentStatus, EntityMention, ResumeVersion,
+    ResumeVersionClassification, ResumeVersionId, SourceRevision, SourceRevisionId,
+    SourceRevisionTriage,
 };
 use parser_pdf::PdfTextExtractionMetrics;
 
@@ -23,13 +24,14 @@ pub(crate) struct PendingSearchableDocument {
     pub(crate) phone_hash: Option<ContactHash>,
     pub(crate) index_document: IndexDocument,
     pub(crate) publication_kind: PendingSearchablePublicationKind,
-    pub(crate) source_occurrence: Option<PendingSourceOccurrence>,
+    pub(crate) commit_route: PendingSearchableCommitRoute,
+    pub(crate) source_revalidation: Option<PendingSourceRevalidation>,
 }
 
-pub(crate) struct PendingSourceOccurrence {
-    pub(crate) task_id: ImportTaskId,
+pub(crate) struct PendingSourceRevalidation {
+    pub(crate) task_id: meta_store::ImportTaskId,
     pub(crate) normalized_path: String,
-    pub(crate) observed_at: UnixTimestamp,
+    pub(crate) observed_at: meta_store::UnixTimestamp,
     pub(crate) strong_observation: Option<fs_crawler::FileObservation>,
 }
 
@@ -37,6 +39,39 @@ pub(crate) struct PendingSourceOccurrence {
 pub(crate) enum PendingSearchablePublicationKind {
     MetadataChanged,
     Replacement,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PendingSearchableCommitRoute {
+    Uncommitted,
+    RootBoundCommitted,
+    MigrationRebuildPrepared,
+}
+
+pub(crate) struct PendingClassifiedDocument {
+    pub(crate) document: Document,
+    pub(crate) source_revision: SourceRevision,
+    pub(crate) classification: ResumeVersionClassification,
+    pub(crate) version: ResumeVersion,
+}
+
+pub(crate) struct PendingSourceTriageDocument {
+    pub(crate) document: Document,
+    pub(crate) source_revision: SourceRevision,
+    pub(crate) triage: SourceRevisionTriage,
+}
+
+pub(crate) enum PendingExistingDocument {
+    Unchanged(Box<Document>),
+    MetadataChanged(Box<Document>),
+}
+
+impl PendingExistingDocument {
+    pub(crate) fn document(&self) -> &Document {
+        match self {
+            Self::Unchanged(document) | Self::MetadataChanged(document) => document,
+        }
+    }
 }
 
 pub(crate) enum PreparedFile {
@@ -143,10 +178,11 @@ pub(crate) enum ExactRerunDecision {
         pending: Box<PendingSearchableDocument>,
     },
     UnchangedOcrRequired {
+        document: PendingExistingDocument,
         source_revision_id: SourceRevisionId,
     },
     UnchangedExcluded {
-        document: Box<meta_store::Document>,
+        document: PendingExistingDocument,
         source_revision_id: SourceRevisionId,
         resume_version_id: ResumeVersionId,
     },

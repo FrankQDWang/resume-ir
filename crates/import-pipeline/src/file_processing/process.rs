@@ -19,9 +19,8 @@ use super::formatting::{
     document_from_discovered_file, file_extension_label, language_set, sections_to_index,
 };
 use super::persistence::{
-    entity_mentions_from_rules, mark_ocr_required_and_enqueue,
-    persist_document_failure_without_revision, persist_non_searchable,
-    persist_source_revision_failure, prepare_pending_searchable_document,
+    entity_mentions_from_rules, prepare_non_searchable, prepare_ocr_required,
+    prepare_pending_searchable_document, prepare_source_revision_failure,
 };
 use super::rerun::{exact_rerun_decision, processed_file_from_exact};
 use crate::classification::AdmissionDecision;
@@ -102,12 +101,9 @@ fn process_file_inner(
         else {
             document.status = DocumentStatus::FailedRetryable;
             document.updated_at = now;
-            measure_result_stage(db_elapsed, || {
-                persist_document_failure_without_revision(store, &document)
-            })?;
             return Ok(ProcessedFile::Failed {
                 kind: ImportFailureKind::ReadError,
-                source_revision_id: None,
+                pending: None,
             });
         };
         *content_bytes_read = content_bytes_read.saturating_add(byte_size);
@@ -120,18 +116,14 @@ fn process_file_inner(
         document.byte_size = source_revision.byte_size;
         document.status = DocumentStatus::FailedPermanent;
         document.updated_at = now;
-        measure_result_stage(db_elapsed, || {
-            persist_source_revision_failure(
-                store,
-                &document,
-                &source_revision,
-                now,
-                linear_promotion,
-            )
-        })?;
         return Ok(ProcessedFile::Failed {
             kind: ImportFailureKind::TextTooLarge,
-            source_revision_id: Some(source_revision.id),
+            pending: Some(Box::new(prepare_source_revision_failure(
+                document,
+                source_revision,
+                now,
+                linear_promotion,
+            )?)),
         });
     }
 
@@ -140,12 +132,9 @@ fn process_file_inner(
         Err(_) => {
             document.status = DocumentStatus::FailedRetryable;
             document.updated_at = now;
-            measure_result_stage(db_elapsed, || {
-                persist_document_failure_without_revision(store, &document)
-            })?;
             return Ok(ProcessedFile::Failed {
                 kind: ImportFailureKind::ReadError,
-                source_revision_id: None,
+                pending: None,
             });
         }
     };
@@ -207,18 +196,14 @@ fn process_file_inner(
         _ => {
             document.status = DocumentStatus::FailedPermanent;
             document.updated_at = now;
-            measure_result_stage(db_elapsed, || {
-                persist_source_revision_failure(
-                    store,
-                    &document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?;
             return Ok(ProcessedFile::Failed {
                 kind: ImportFailureKind::UnsupportedExtension,
-                source_revision_id: Some(source_revision.id),
+                pending: Some(Box::new(prepare_source_revision_failure(
+                    document,
+                    source_revision,
+                    now,
+                    linear_promotion,
+                )?)),
             });
         }
     };
@@ -238,31 +223,16 @@ fn process_file_inner(
                 DocumentStatus::FailedPermanent
             };
             return Ok(if document.status == DocumentStatus::OcrRequired {
-                ProcessedFile::OcrRequired {
-                    ocr_job_queued: measure_result_stage(db_elapsed, || {
-                        mark_ocr_required_and_enqueue(
-                            store,
-                            &mut document,
-                            &source_revision,
-                            now,
-                            linear_promotion,
-                        )
-                    })?,
-                    source_revision_id: source_revision.id,
-                }
+                prepare_ocr_required(document, source_revision, now, linear_promotion)?
             } else {
-                measure_result_stage(db_elapsed, || {
-                    persist_source_revision_failure(
-                        store,
-                        &document,
-                        &source_revision,
-                        now,
-                        linear_promotion,
-                    )
-                })?;
                 ProcessedFile::Failed {
                     kind: ImportFailureKind::from_parser_error(error.kind()),
-                    source_revision_id: Some(source_revision.id),
+                    pending: Some(Box::new(prepare_source_revision_failure(
+                        document,
+                        source_revision,
+                        now,
+                        linear_promotion,
+                    )?)),
                 }
             });
         }
@@ -270,18 +240,7 @@ fn process_file_inner(
 
     if parse_output.status() == ParseStatus::OcrRequired {
         ensure_not_cancelled()?;
-        return Ok(ProcessedFile::OcrRequired {
-            ocr_job_queued: measure_result_stage(db_elapsed, || {
-                mark_ocr_required_and_enqueue(
-                    store,
-                    &mut document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?,
-            source_revision_id: source_revision.id,
-        });
+        return prepare_ocr_required(document, source_revision, now, linear_promotion);
     }
 
     ensure_not_cancelled()?;
@@ -295,34 +254,19 @@ fn process_file_inner(
         if file.extension == FileExtension::Txt {
             document.status = DocumentStatus::FailedPermanent;
             document.updated_at = now;
-            measure_result_stage(db_elapsed, || {
-                persist_source_revision_failure(
-                    store,
-                    &document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?;
             return Ok(ProcessedFile::Failed {
                 kind: ImportFailureKind::EmptyText,
-                source_revision_id: Some(source_revision.id),
+                pending: Some(Box::new(prepare_source_revision_failure(
+                    document,
+                    source_revision,
+                    now,
+                    linear_promotion,
+                )?)),
             });
         }
 
         ensure_not_cancelled()?;
-        return Ok(ProcessedFile::OcrRequired {
-            ocr_job_queued: measure_result_stage(db_elapsed, || {
-                mark_ocr_required_and_enqueue(
-                    store,
-                    &mut document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?,
-            source_revision_id: source_revision.id,
-        });
+        return prepare_ocr_required(document, source_revision, now, linear_promotion);
     }
 
     ensure_not_cancelled()?;
@@ -349,14 +293,13 @@ fn process_file_inner(
     let version_id = version.id.clone();
     if !admitted {
         document.status = DocumentStatus::Excluded;
-        measure_result_stage(db_elapsed, || {
-            persist_non_searchable(store, &document, &source_revision, &version, decision, now)
-        })?;
-        return Ok(ProcessedFile::Excluded {
-            document: Box::new(document),
-            source_revision_id: source_revision.id,
-            resume_version_id: version.id,
-        });
+        return Ok(prepare_non_searchable(
+            document,
+            source_revision,
+            version,
+            decision,
+            now,
+        ));
     }
     let mentions = entity_mentions_from_rules(&version_id, &clean_text);
     let index_document = IndexDocument {

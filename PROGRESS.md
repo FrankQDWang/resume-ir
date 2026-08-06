@@ -1,5 +1,34 @@
 # Progress
 
+## Issue #451 atomic source-root-bound import commit
+
+Issue #451 closes the configured-import orphan race without a new schema or queue. All
+configured producers with a persisted import task now enter one metadata-store
+`Immediate` transaction that reuses the v38 task/scope/snapshot/root/canonical/epoch
+binding, then commits immutable facts or existing metadata, occurrence/revision,
+optional strong observation, and optional OCR job as one operation. Read failures do
+not create a rootless document. Migration rebuild remains an explicit typed path and
+cannot become a configured-import fallback.
+
+The deterministic red witness used the real `process_file` then sibling deletion then
+`finish_import_file` order: before the fix, immutable document data already existed and
+finish returned success after deletion began. It now proves processing performs no
+durable stage, finish rejects the revoked binding, and no private row remains.
+
+Focused evidence covers classified, source-triage, OCR, existing-revision,
+metadata-only and read-failure mutations; missing/mismatched/stale/active/unknown
+bindings; every stage/occurrence/observation/OCR rollback cut; sibling-root isolation;
+and reopen persistence. Full meta-store and import-pipeline suites pass. The old
+configured searchable stage -> occurrence -> strong-observation sequence is no longer
+reachable; its low-level capabilities remain only for the explicit migration-rebuild
+route and existing focused tests. Filesystem re-observation and search/artifact
+publication remain after the database commit.
+
+Resource boundary: one `Immediate` transaction per configured producer, one indexed
+binding read, existing point writes only, and no new schema, scan, thread, queue,
+polling, IPC, or corpus-proportional memory. The persisted task purpose is read once
+per import run rather than once per file.
+
 ## Issue #446 durable source-root revocation epoch foundation
 
 Issue #446 advances metadata to schema v38. Each root owns one bounded revocation epoch;

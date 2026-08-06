@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Instant;
 
 use fs_crawler::DiscoveredFile;
-use meta_store::{ImportTaskId, OwnedMetaStore, UnixTimestamp};
+use meta_store::{ImportTaskId, ImportTaskPurpose, OwnedMetaStore, UnixTimestamp};
 use sectionizer::Sectionizer;
 
 use super::scheduler::{
@@ -30,6 +30,7 @@ pub(super) fn process_files_with_parse_workers(
     data_dir: &Path,
     store: &OwnedMetaStore,
     task_id: &ImportTaskId,
+    purpose: ImportTaskPurpose,
     files: Vec<DiscoveredFile>,
     now: UnixTimestamp,
     ensure_not_cancelled: &dyn Fn() -> Result<()>,
@@ -57,6 +58,7 @@ pub(super) fn process_files_with_parse_workers(
             data_dir,
             store,
             task_id,
+            purpose,
             files,
             &sectionizer,
             now,
@@ -102,6 +104,7 @@ pub(super) fn process_files_with_parse_workers(
         finish_import_file(
             store,
             task_id,
+            purpose,
             now,
             ensure_not_cancelled,
             summary,
@@ -136,6 +139,7 @@ pub(super) fn process_files_with_parse_workers(
             data_dir,
             store,
             task_id,
+            purpose,
             remaining_files,
             &sectionizer,
             now,
@@ -179,6 +183,7 @@ pub(super) fn process_files_with_parse_workers(
                 data_dir,
                 store,
                 task_id,
+                purpose,
                 now,
                 ensure_not_cancelled,
                 summary,
@@ -239,6 +244,7 @@ pub(super) fn process_files_with_parse_workers(
                 data_dir,
                 store,
                 task_id,
+                purpose,
                 now,
                 ensure_not_cancelled,
                 summary,
@@ -266,6 +272,7 @@ pub(super) fn process_files_with_parse_workers(
                 data_dir,
                 store,
                 task_id,
+                purpose,
                 now,
                 ensure_not_cancelled,
                 summary,
