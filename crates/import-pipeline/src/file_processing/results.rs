@@ -11,8 +11,8 @@ use super::model::{
     ProcessedImportFile,
 };
 use super::persistence::{
-    mark_ocr_required_and_enqueue, persist_non_searchable, persist_source_revision_failure,
-    prepare_pending_searchable_document,
+    prepare_non_searchable, prepare_ocr_required, prepare_pending_searchable_document,
+    prepare_source_revision_failure,
 };
 use crate::source_dispositions::ProcessedFile;
 use crate::timing::measure_result_stage;
@@ -107,7 +107,7 @@ pub(crate) fn insert_import_file_result(
 
 pub(crate) fn commit_parse_work_result(
     data_dir: &Path,
-    store: &OwnedMetaStore,
+    _store: &OwnedMetaStore,
     now: UnixTimestamp,
     db_timing: &mut Duration,
     worker_metrics: &mut ImportWorkerMetrics,
@@ -154,50 +154,24 @@ pub(crate) fn commit_parse_work_result(
             })?
         }
         ParseWorkOutcome::Excluded { decision, version } => {
-            let source_revision_id = source_revision.id.clone();
-            let resume_version_id = version.id.clone();
             document.status = DocumentStatus::Excluded;
             document.updated_at = now;
-            measure_result_stage(db_timing, || {
-                persist_non_searchable(store, &document, &source_revision, &version, decision, now)
-            })?;
-            ProcessedFile::Excluded {
-                document: Box::new(document),
-                source_revision_id,
-                resume_version_id,
-            }
+            prepare_non_searchable(document, source_revision, *version, decision, now)
         }
         ParseWorkOutcome::OcrRequired => {
-            let source_revision_id = source_revision.id.clone();
-            ProcessedFile::OcrRequired {
-                ocr_job_queued: measure_result_stage(db_timing, || {
-                    mark_ocr_required_and_enqueue(
-                        store,
-                        &mut document,
-                        &source_revision,
-                        now,
-                        linear_promotion,
-                    )
-                })?,
-                source_revision_id,
-            }
+            prepare_ocr_required(document, source_revision, now, linear_promotion)?
         }
         ParseWorkOutcome::Failed { status, kind } => {
-            let source_revision_id = source_revision.id.clone();
             document.status = status;
             document.updated_at = now;
-            measure_result_stage(db_timing, || {
-                persist_source_revision_failure(
-                    store,
-                    &document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?;
             ProcessedFile::Failed {
                 kind,
-                source_revision_id: Some(source_revision_id),
+                pending: Some(Box::new(prepare_source_revision_failure(
+                    document,
+                    source_revision,
+                    now,
+                    linear_promotion,
+                )?)),
             }
         }
     };

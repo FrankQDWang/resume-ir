@@ -1,3 +1,6 @@
+use std::path::Path;
+use std::str::FromStr;
+
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::{
@@ -39,12 +42,53 @@ pub(super) fn validate_scan_commit(
     root_id: &SourceRootId,
     task_id: &ImportTaskId,
 ) -> Result<()> {
-    let deletion_phase = connection
+    let binding = read_scan_commit_binding(connection, task_id)?;
+    if &binding.root_id != root_id {
+        return Err(MetaStoreError::invalid_transition());
+    }
+    validate_terminal_receipt(binding.deletion_phase)
+}
+
+pub(super) struct RootBoundImportIdentity {
+    pub(super) root_id: SourceRootId,
+    pub(super) relative_path: String,
+}
+
+pub(super) fn validate_import_commit(
+    connection: &Connection,
+    task_id: &ImportTaskId,
+    normalized_path: &str,
+) -> Result<RootBoundImportIdentity> {
+    let binding = read_scan_commit_binding(connection, task_id)?;
+    validate_terminal_receipt(binding.deletion_phase)?;
+    let relative_path = Path::new(normalized_path)
+        .strip_prefix(Path::new(&binding.canonical_path))
+        .map_err(|_| MetaStoreError::invalid_transition())?
+        .to_string_lossy()
+        .replace('\\', "/");
+    super::source_roots::validate_relative_path(&relative_path)?;
+    Ok(RootBoundImportIdentity {
+        root_id: binding.root_id,
+        relative_path,
+    })
+}
+
+struct PersistedScanCommitBinding {
+    root_id: SourceRootId,
+    canonical_path: String,
+    deletion_phase: Option<SourceRootDeletionPhase>,
+}
+
+fn read_scan_commit_binding(
+    connection: &Connection,
+    task_id: &ImportTaskId,
+) -> Result<PersistedScanCommitBinding> {
+    let persisted = connection
         .query_row(
-            "SELECT deletion.phase
+            "SELECT root.id, root.canonical_path, deletion.phase
              FROM source_root AS root
              JOIN import_task AS task
-               ON task.id = ?2 AND task.root_path = root.canonical_path
+               ON task.id = ?1 AND task.root_path = root.canonical_path
              JOIN import_scan_scope AS scope
                ON scope.import_task_id = task.id
               AND scope.canonical_root_path = root.canonical_path
@@ -54,24 +98,35 @@ pub(super) fn validate_scan_commit(
               AND typeof(snapshot.root_revocation_epoch) = 'integer'
               AND snapshot.root_revocation_epoch = root.revocation_epoch
              LEFT JOIN source_root_deletion AS deletion ON deletion.root_id = root.id
-             WHERE root.id = ?1
-               AND typeof(root.revocation_epoch) = 'integer'
-               AND root.revocation_epoch BETWEEN 0 AND ?3",
-            params![
-                root_id.as_str(),
-                task_id.as_str(),
-                schema_v38::MAX_ROOT_REVOCATION_EPOCH
-            ],
-            |row| row.get::<_, Option<String>>(0),
+             WHERE typeof(root.revocation_epoch) = 'integer'
+               AND root.revocation_epoch BETWEEN 0 AND ?2",
+            params![task_id.as_str(), schema_v38::MAX_ROOT_REVOCATION_EPOCH],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
         )
         .optional()
         .map_err(MetaStoreError::storage)?
         .ok_or_else(MetaStoreError::invalid_transition)?;
-    if deletion_phase
+    let root_id = SourceRootId::from_str(&persisted.0)
+        .map_err(|_| MetaStoreError::invalid_value("source_root.id"))?;
+    let deletion_phase = persisted
+        .2
         .map(|value| SourceRootDeletionPhase::parse(&value))
-        .transpose()?
-        .is_some_and(SourceRootDeletionPhase::is_active)
-    {
+        .transpose()?;
+    Ok(PersistedScanCommitBinding {
+        root_id,
+        canonical_path: persisted.1,
+        deletion_phase,
+    })
+}
+
+fn validate_terminal_receipt(deletion_phase: Option<SourceRootDeletionPhase>) -> Result<()> {
+    if deletion_phase.is_some_and(SourceRootDeletionPhase::is_active) {
         return Err(MetaStoreError::invalid_transition());
     }
     Ok(())

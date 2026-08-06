@@ -24,10 +24,7 @@ use super::model::{
     ParseWorkItem, ParseWorkItemOutput, ParseWorkOutcome, ParseWorkResult, PreparedFile,
     ProcessedImportFile,
 };
-use super::persistence::{
-    entity_mentions_from_rules, persist_document_failure_without_revision,
-    persist_source_revision_failure,
-};
+use super::persistence::{entity_mentions_from_rules, prepare_source_revision_failure};
 use super::rerun::{exact_rerun_decision, processed_file_from_exact};
 use crate::classification::AdmissionDecision;
 use crate::file_observation_fast_path::{attempt_metadata_fast_path, FastPathAttempt};
@@ -105,14 +102,11 @@ pub(crate) fn prepare_file_for_parse_inner(
         else {
             document.status = DocumentStatus::FailedRetryable;
             document.updated_at = now;
-            measure_result_stage(db_elapsed, || {
-                persist_document_failure_without_revision(store, &document)
-            })?;
             return Ok(PreparedFile::Ready(ProcessedImportFile {
                 file,
                 processed: ProcessedFile::Failed {
                     kind: ImportFailureKind::ReadError,
-                    source_revision_id: None,
+                    pending: None,
                 },
                 verification: ContentVerification::Unavailable,
             }));
@@ -127,20 +121,16 @@ pub(crate) fn prepare_file_for_parse_inner(
         document.byte_size = source_revision.byte_size;
         document.status = DocumentStatus::FailedPermanent;
         document.updated_at = now;
-        measure_result_stage(db_elapsed, || {
-            persist_source_revision_failure(
-                store,
-                &document,
-                &source_revision,
-                now,
-                linear_promotion,
-            )
-        })?;
         return Ok(PreparedFile::Ready(ProcessedImportFile {
             file,
             processed: ProcessedFile::Failed {
                 kind: ImportFailureKind::TextTooLarge,
-                source_revision_id: Some(source_revision.id),
+                pending: Some(Box::new(prepare_source_revision_failure(
+                    document,
+                    source_revision,
+                    now,
+                    linear_promotion,
+                )?)),
             },
             verification: ContentVerification::Unavailable,
         }));
@@ -151,14 +141,11 @@ pub(crate) fn prepare_file_for_parse_inner(
         Err(_) => {
             document.status = DocumentStatus::FailedRetryable;
             document.updated_at = now;
-            measure_result_stage(db_elapsed, || {
-                persist_document_failure_without_revision(store, &document)
-            })?;
             return Ok(PreparedFile::Ready(ProcessedImportFile {
                 file,
                 processed: ProcessedFile::Failed {
                     kind: ImportFailureKind::ReadError,
-                    source_revision_id: None,
+                    pending: None,
                 },
                 verification: ContentVerification::Unavailable,
             }));

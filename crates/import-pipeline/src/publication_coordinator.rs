@@ -19,10 +19,11 @@ use crate::search_publication_commit::{
 };
 use crate::{
     measure_result_stage, ImportCancelCheckPhase, ImportMilestoneTimings, ImportPipelineError,
-    ImportResourcePolicy, ImportSummary, ImportWorkerMetrics, PendingSearchableDocument,
-    PendingSearchablePublicationKind, Result, SearchArtifactPublicationSummary,
-    SearchGenerationHandoff, SearchGenerationPublicationDisposition, SearchProjectionRemoval,
-    SearchProjectionRemovalReason, SearchPublicationVectorization,
+    ImportResourcePolicy, ImportSummary, ImportWorkerMetrics, PendingSearchableCommitRoute,
+    PendingSearchableDocument, PendingSearchablePublicationKind, Result,
+    SearchArtifactPublicationSummary, SearchGenerationHandoff,
+    SearchGenerationPublicationDisposition, SearchProjectionRemoval, SearchProjectionRemovalReason,
+    SearchPublicationVectorization,
 };
 
 struct ScheduledProjectionRemoval {
@@ -160,8 +161,24 @@ pub(super) fn flush_pending_searchable_documents_with_handoff(
         ensure_not_cancelled()?;
         measure_result_stage(&mut summary.stage_timings.db, || {
             for pending in pending_index_documents.iter() {
-                match pending.publication_kind {
-                    PendingSearchablePublicationKind::Replacement => {
+                if let Some(source) = &pending.source_revalidation {
+                    if let Some(expected) = &source.strong_observation {
+                        let current =
+                            fs_crawler::observe_path(std::path::Path::new(&source.normalized_path))
+                                .ok()
+                                .flatten();
+                        if current.as_ref() != Some(expected) {
+                            return Err(ImportPipelineError::source_changed_during_import());
+                        }
+                    }
+                }
+                match pending.commit_route {
+                    PendingSearchableCommitRoute::RootBoundCommitted => {}
+                    PendingSearchableCommitRoute::MigrationRebuildPrepared => {
+                        if pending.publication_kind != PendingSearchablePublicationKind::Replacement
+                        {
+                            return Err(ImportPipelineError::store_invariant());
+                        }
                         immutable_ingest::stage(
                             store,
                             StagedResume {
@@ -177,49 +194,37 @@ pub(super) fn flush_pending_searchable_documents_with_handoff(
                             },
                         )
                         .map_err(ImportPipelineError::store)?;
-                    }
-                    PendingSearchablePublicationKind::MetadataChanged => {
-                        // The immutable version and derived facts are already active. The
-                        // exact mutable Document snapshot was staged by rerun detection and
-                        // is published only by the generation CAS below.
-                    }
-                }
-                if let Some(occurrence) = &pending.source_occurrence {
-                    if let Some(expected) = occurrence.strong_observation.as_ref() {
-                        let current = fs_crawler::observe_path(std::path::Path::new(
-                            &occurrence.normalized_path,
-                        ))
-                        .ok()
-                        .flatten();
-                        if current.as_ref() != Some(expected) {
-                            return Err(ImportPipelineError::source_changed_during_import());
+                        if let Some(source) = &pending.source_revalidation {
+                            store
+                                .observe_import_task_source_occurrence(
+                                    &source.task_id,
+                                    &source.normalized_path,
+                                    &pending.document.id,
+                                    &pending.source_revision.id,
+                                    source.observed_at,
+                                )
+                                .map_err(ImportPipelineError::store)?;
+                            if let Some(observed) = &source.strong_observation {
+                                store
+                                    .record_strong_source_file_observation(
+                                        &source.task_id,
+                                        &source.normalized_path,
+                                        &strong_store_observation(
+                                            pending.source_revision.id.clone(),
+                                            observed,
+                                            source.observed_at,
+                                        ),
+                                    )
+                                    .map_err(ImportPipelineError::store)?;
+                                summary.io_metrics.strong_observations_persisted = summary
+                                    .io_metrics
+                                    .strong_observations_persisted
+                                    .saturating_add(1);
+                            }
                         }
                     }
-                    store
-                        .observe_import_task_source_occurrence(
-                            &occurrence.task_id,
-                            &occurrence.normalized_path,
-                            &pending.document.id,
-                            &pending.source_revision.id,
-                            occurrence.observed_at,
-                        )
-                        .map_err(ImportPipelineError::store)?;
-                    if let Some(observed) = occurrence.strong_observation.as_ref() {
-                        store
-                            .record_strong_source_file_observation(
-                                &occurrence.task_id,
-                                &occurrence.normalized_path,
-                                &strong_store_observation(
-                                    pending.source_revision.id.clone(),
-                                    observed,
-                                    occurrence.observed_at,
-                                ),
-                            )
-                            .map_err(ImportPipelineError::store)?;
-                        summary.io_metrics.strong_observations_persisted = summary
-                            .io_metrics
-                            .strong_observations_persisted
-                            .saturating_add(1);
+                    PendingSearchableCommitRoute::Uncommitted => {
+                        return Err(ImportPipelineError::store_invariant());
                     }
                 }
             }

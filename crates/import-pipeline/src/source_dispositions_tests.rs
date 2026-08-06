@@ -9,7 +9,7 @@ use resume_classifier::LinearPromotionPolicy;
 use tempfile::tempdir;
 
 use super::*;
-use crate::{current_import_processing_contract, persist_source_revision_failure, ImportOptions};
+use crate::{current_import_processing_contract, ImportOptions};
 
 #[test]
 fn disposition_buffer_flushes_at_the_bounded_batch_limit() {
@@ -29,14 +29,20 @@ fn disposition_buffer_flushes_at_the_bounded_batch_limit() {
         );
         document.content_hash = Some(source_revision.content_hash.as_str().to_string());
         document.byte_size = source_revision.byte_size;
-        persist_source_revision_failure(
-            &store,
-            &document,
-            &source_revision,
+        let pending = crate::file_processing::prepare_source_revision_failure(
+            document.clone(),
+            source_revision.clone(),
             now,
             &LinearPromotionPolicy::default(),
         )
         .unwrap();
+        store
+            .stage_immutable_ingest(meta_store::ImmutableIngestStage::SourceTriage {
+                document: &pending.document,
+                source_revision: &pending.source_revision,
+                triage: &pending.triage,
+            })
+            .unwrap();
         batches.record(
             ImportTaskSourceDisposition {
                 source_ordinal: u64::try_from(source_ordinal).unwrap(),
