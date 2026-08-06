@@ -958,7 +958,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             close_orphaned_active_scan(&transaction, &active, now)?;
         }
         let root_revocation_epoch =
-            super::source_root_commit_fence::capture_scan_epoch(&transaction, root_id)?;
+            super::source_root_commit_fence::read_epoch(&transaction, root_id)?;
         let task_head = coordinate_import_root_task_head_in_connection(
             &transaction,
             ImportRootTaskHeadRequest::Configured {

@@ -4,19 +4,6 @@ use crate::{
     schema_v38, ImportTaskId, MetaStoreError, Result, SourceRootDeletionPhase, SourceRootId,
 };
 
-struct DurableScanBinding {
-    task_id: Option<String>,
-    scope_task_id: Option<String>,
-    snapshot_id: Option<String>,
-    task_root_path: Option<String>,
-    scope_root_path: Option<String>,
-    snapshot_root_id: Option<String>,
-    snapshot_epoch: Option<i64>,
-    canonical_root_path: String,
-    root_epoch: i64,
-    deletion_phase: Option<String>,
-}
-
 pub(super) fn source_root_is_deleting(
     connection: &Connection,
     canonical_root_path: &str,
@@ -39,10 +26,6 @@ pub(super) fn source_root_is_deleting(
         .map(Option::unwrap_or_default)
 }
 
-pub(super) fn capture_scan_epoch(connection: &Connection, root_id: &SourceRootId) -> Result<i64> {
-    read_epoch(connection, root_id)
-}
-
 pub(super) fn admit_scan(connection: &Connection, root_id: &SourceRootId) -> Result<i64> {
     let epoch = read_epoch(connection, root_id)?;
     if deletion_phase(connection, root_id)?.is_some_and(SourceRootDeletionPhase::is_active) {
@@ -56,28 +39,35 @@ pub(super) fn validate_scan_commit(
     root_id: &SourceRootId,
     task_id: &ImportTaskId,
 ) -> Result<()> {
-    let binding = read_durable_scan_binding(connection, root_id, task_id)?;
-    let expected_task_id = Some(task_id.as_str());
-    let expected_root_id = Some(root_id.as_str());
-    if binding.task_id.as_deref() != expected_task_id
-        || binding.scope_task_id.as_deref() != expected_task_id
-        || binding.snapshot_id.as_deref() != expected_task_id
-        || binding.task_root_path.as_deref() != Some(binding.canonical_root_path.as_str())
-        || binding.scope_root_path.as_deref() != Some(binding.canonical_root_path.as_str())
-        || binding.snapshot_root_id.as_deref() != expected_root_id
-    {
-        return Err(MetaStoreError::invalid_transition());
-    }
-    validate_epoch(binding.root_epoch)?;
-    let snapshot_epoch = binding
-        .snapshot_epoch
+    let deletion_phase = connection
+        .query_row(
+            "SELECT deletion.phase
+             FROM source_root AS root
+             JOIN import_task AS task
+               ON task.id = ?2 AND task.root_path = root.canonical_path
+             JOIN import_scan_scope AS scope
+               ON scope.import_task_id = task.id
+              AND scope.canonical_root_path = root.canonical_path
+             JOIN scan_snapshot AS snapshot
+               ON snapshot.id = task.id
+              AND snapshot.root_id = root.id
+              AND typeof(snapshot.root_revocation_epoch) = 'integer'
+              AND snapshot.root_revocation_epoch = root.revocation_epoch
+             LEFT JOIN source_root_deletion AS deletion ON deletion.root_id = root.id
+             WHERE root.id = ?1
+               AND typeof(root.revocation_epoch) = 'integer'
+               AND root.revocation_epoch BETWEEN 0 AND ?3",
+            params![
+                root_id.as_str(),
+                task_id.as_str(),
+                schema_v38::MAX_ROOT_REVOCATION_EPOCH
+            ],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(MetaStoreError::storage)?
         .ok_or_else(MetaStoreError::invalid_transition)?;
-    validate_epoch(snapshot_epoch)?;
-    if snapshot_epoch != binding.root_epoch {
-        return Err(MetaStoreError::invalid_transition());
-    }
-    if binding
-        .deletion_phase
+    if deletion_phase
         .map(|value| SourceRootDeletionPhase::parse(&value))
         .transpose()?
         .is_some_and(SourceRootDeletionPhase::is_active)
@@ -167,44 +157,6 @@ pub(super) fn validate_receipt_root_invariants(connection: &Connection) -> Resul
     Ok(())
 }
 
-fn read_durable_scan_binding(
-    connection: &Connection,
-    root_id: &SourceRootId,
-    task_id: &ImportTaskId,
-) -> Result<DurableScanBinding> {
-    connection
-        .query_row(
-            "SELECT task.id, scope.import_task_id, snapshot.id,
-                    task.root_path, scope.canonical_root_path, snapshot.root_id,
-                    snapshot.root_revocation_epoch, root.canonical_path,
-                    root.revocation_epoch, deletion.phase
-             FROM source_root AS root
-             LEFT JOIN import_task AS task ON task.id = ?2
-             LEFT JOIN import_scan_scope AS scope ON scope.import_task_id = ?2
-             LEFT JOIN scan_snapshot AS snapshot ON snapshot.id = ?2
-             LEFT JOIN source_root_deletion AS deletion ON deletion.root_id = root.id
-             WHERE root.id = ?1",
-            params![root_id.as_str(), task_id.as_str()],
-            |row| {
-                Ok(DurableScanBinding {
-                    task_id: row.get(0)?,
-                    scope_task_id: row.get(1)?,
-                    snapshot_id: row.get(2)?,
-                    task_root_path: row.get(3)?,
-                    scope_root_path: row.get(4)?,
-                    snapshot_root_id: row.get(5)?,
-                    snapshot_epoch: row.get(6)?,
-                    canonical_root_path: row.get(7)?,
-                    root_epoch: row.get(8)?,
-                    deletion_phase: row.get(9)?,
-                })
-            },
-        )
-        .optional()
-        .map_err(MetaStoreError::storage)?
-        .ok_or_else(MetaStoreError::invalid_transition)
-}
-
 fn deletion_phase(
     connection: &Connection,
     root_id: &SourceRootId,
@@ -221,7 +173,7 @@ fn deletion_phase(
         .transpose()
 }
 
-fn read_epoch(connection: &Connection, root_id: &SourceRootId) -> Result<i64> {
+pub(super) fn read_epoch(connection: &Connection, root_id: &SourceRootId) -> Result<i64> {
     let epoch = connection
         .query_row(
             "SELECT revocation_epoch FROM source_root WHERE id = ?1",
@@ -231,13 +183,8 @@ fn read_epoch(connection: &Connection, root_id: &SourceRootId) -> Result<i64> {
         .optional()
         .map_err(MetaStoreError::storage)?
         .ok_or_else(|| MetaStoreError::not_found("source_root"))?;
-    validate_epoch(epoch)?;
-    Ok(epoch)
-}
-
-fn validate_epoch(epoch: i64) -> Result<()> {
     if !(0..=schema_v38::MAX_ROOT_REVOCATION_EPOCH).contains(&epoch) {
         return Err(MetaStoreError::storage_invariant());
     }
-    Ok(())
+    Ok(epoch)
 }
