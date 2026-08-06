@@ -16,6 +16,11 @@ saturation, unknown phase and both rollback cuts. Strict v37 recovery covers all
 and initialization Preparing/Ready. Runtime admission is O(1); only COW scans receipt history;
 storage grows by two fixed integer columns.
 
+Post-merge corrective review replaced caller-supplied epoch validation with one persisted
+task/scope/snapshot/root binding read. Missing or mismatched identity, stale capture, active or
+unknown receipt phases fail closed. Deletion begin now parses any existing receipt before epoch
+DML, while root registration and v38 receipt/root validation reuse the same typed phase owner.
+
 ## Issue #443 one-time legacy Quiescing deletion reconciliation
 
 Issue #443 keeps `MetaStore::begin_source_root_deletion_attempt` as the sole

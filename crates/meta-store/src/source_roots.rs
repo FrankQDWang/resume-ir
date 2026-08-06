@@ -678,22 +678,10 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             .map_err(MetaStoreError::storage)?;
         let existing = all_source_root_identities(&transaction)?;
         for registration in registrations {
-            let deleting = transaction
-                .query_row(
-                    "SELECT EXISTS(
-                        SELECT 1
-                        FROM source_root
-                        JOIN source_root_deletion AS deletion
-                          ON deletion.root_id = source_root.id
-                        WHERE source_root.canonical_path = ?1
-                          AND deletion.phase NOT IN ('complete', 'failed')
-                     )",
-                    params![registration.canonical_path.as_str()],
-                    |row| row.get::<_, i64>(0),
-                )
-                .map_err(MetaStoreError::storage)?
-                != 0;
-            if deleting {
+            if super::source_root_commit_fence::source_root_is_deleting(
+                &transaction,
+                &registration.canonical_path,
+            )? {
                 return Err(MetaStoreError::invalid_transition());
             }
         }
@@ -1020,7 +1008,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         super::source_root_commit_fence::validate_scan_commit(
             &transaction,
             root_id,
-            root_revocation_epoch,
+            &persisted_task.id,
         )?;
         let snapshot = ScanSnapshot {
             id: persisted_task.id.as_str().to_string(),
