@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use import_pipeline::import_root_with_options;
 use meta_store::{
     DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportTask, ImportTaskId,
-    ImportTaskStatus, IngestJobStatus, OwnedMetaStore, ReadMetaStore, ScanTrigger, UnixTimestamp,
+    ImportTaskStatus, IngestJobStatus, OwnedMetaStore, ReadMetaStore, UnixTimestamp,
 };
 use process_containment::ContainedChild;
 use sha2::{Digest, Sha256};
@@ -987,17 +987,6 @@ fn data_dir_with_queued_ocr_corpus(
         finished_at: None,
         updated_at: now,
     };
-    let source_root = store
-        .register_source_root(
-            path_str(&canonical_root),
-            path_str(&canonical_root),
-            "synthetic OCR publication witness",
-            now,
-        )
-        .unwrap();
-    store
-        .begin_scan(&source_root.id, task.id.as_str(), ScanTrigger::Manual, now)
-        .unwrap();
     let processing_contract = support::insert_import_task_with_reviewed_contract(&store, &task);
     let mut import_options = support::reviewed_import_options();
     import_options.search_vectorization = publication_load_witness::witness_vectorization();

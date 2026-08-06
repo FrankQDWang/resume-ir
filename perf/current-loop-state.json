@@ -5,8 +5,8 @@
   "experiment_state": "accepted",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "df1c8eb6c6e438309a31b014ab70d13ea26e0378b6e689c0ca365a55eac86d8c",
-    "acceptance_matrix_sha256": "8af63c2df72571116ad2493df5c0e52f175dbc7c5900b3becc92d60d4eeaafd9",
+    "active_goal_sha256": "7fb5aac95081089e2f6b31e89b48d36dcce5bea6a4cc2622890a4766f33b185c",
+    "acceptance_matrix_sha256": "9c3180bf8e7b2204cf01f60ad3f4a29619a5155d691ec395e03e04e4d2338f21",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",

@@ -1,5 +1,48 @@
 # Progress
 
+## Issue #454 root-bound OCR claim and publication
+
+Issue #454 advances metadata to schema v39 and closes the remaining reachable
+background-producer deletion race. Each running OCR attempt owns one private
+`ocr_claim_source_fence` row bound to the exact ingest job attempt, document,
+source revision and triage identity, present source occurrence, canonical root/path,
+and bounded root revocation epoch. Claim selection is deterministic and examines at
+most 257 candidates; a valid attempt is never authorized by caller-supplied root or
+epoch data.
+
+The daemon and CLI now use the same claim authority. Every OCR page-cache write and
+the final OCR facts/search publication revalidate the persisted fence inside their
+own existing `Immediate` transaction before private DML. Missing, mismatched, stale,
+deleting, unknown-phase or invalid-storage bindings fail closed. A shared document
+may rebind to another currently valid occurrence without consuming its OCR failure
+budget. Job, revision/triage or source-occurrence deletion cascades the fence, so
+privacy cleanup cannot be blocked or leave an orphan row.
+
+The existing publication lease/head CAS remains authoritative. After the OCR database
+commit, the daemon validates the completed fence once more before activating the
+prepared runtime generation; a deletion in that interval aborts activation and the
+existing retirement owner removes the invisible generation. Filesystem rendering and
+OCR stay outside SQLite locks, and no queue, outbox, retry cadence, thread, polling,
+daemon IPC or UI contract was added.
+
+The activation-baseline red witness also exposed a user-reachable #451 regression:
+unmanaged offline CLI import created only a configured task/scope and then necessarily
+failed the root-bound commit. The old rootless batch path is now removed. Fresh direct
+imports atomically register an empty reusable root and use the same existing
+`coordinate_source_root_scan` authority as managed roots before any file commit or OCR
+enqueue. Coordination failure leaves no task, snapshot or private rows, and retry
+converges after the blocker is terminal.
+
+Synthetic evidence covers strict v38-to-v39 COW/reopen recovery, legacy running-job
+reclaim, cache and final-publication deletion interleavings, shared-document rebind,
+post-commit runtime activation, fresh direct-import binding and retry. Verification
+passes all 187 meta-store tests, all 150 import-pipeline tests (one existing ignored),
+CLI deletion 9/9 and OCR handoff 16/16, plus the focused daemon activation test. The
+claim row is fixed-size; stable claim/cache/publication work uses indexed point reads
+and writes, while the bounded shared-occurrence selection is capped at 257 rows. No
+corpus scan or durable resource growth beyond one current fence per claimed OCR job is
+introduced.
+
 ## Issue #451 atomic source-root-bound import commit
 
 Issue #451 closes the configured-import orphan race without a new schema or queue. All

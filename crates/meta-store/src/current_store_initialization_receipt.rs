@@ -10,7 +10,7 @@ use crate::{
     active_store_manifest::{
         sync_parent_directory, validate_owner_regular_metadata, ActiveStoreManifest,
     },
-    schema_v35, schema_v36, schema_v37, schema_v38, MetaStoreError, Result,
+    schema_v35, schema_v36, schema_v37, schema_v38, schema_v39, MetaStoreError, Result,
 };
 
 pub(super) const FILE_NAME: &str = "metadata-initialization-receipt.v1";
@@ -23,10 +23,12 @@ pub(super) enum InitializationGeneration {
     V36,
     V37,
     V38,
+    V39,
 }
 
 impl InitializationGeneration {
-    pub(super) const RECOVERABLE: [Self; 4] = [Self::V35, Self::V36, Self::V37, Self::V38];
+    pub(super) const RECOVERABLE: [Self; 5] =
+        [Self::V35, Self::V36, Self::V37, Self::V38, Self::V39];
 
     fn schema_version(self) -> u32 {
         match self {
@@ -34,6 +36,7 @@ impl InitializationGeneration {
             Self::V36 => schema_v36::VERSION,
             Self::V37 => schema_v37::VERSION,
             Self::V38 => schema_v38::VERSION,
+            Self::V39 => schema_v39::VERSION,
         }
     }
 
@@ -43,6 +46,7 @@ impl InitializationGeneration {
             Self::V36 => ".metadata-v36-init-",
             Self::V37 => ".metadata-v37-init-",
             Self::V38 => ".metadata-v38-init-",
+            Self::V39 => ".metadata-v39-init-",
         }
     }
 }

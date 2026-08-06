@@ -10,15 +10,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use import_pipeline::{
-    current_import_processing_contract, finalize_migration_rebuild, import_root_with_options,
-    prepare_migration_rebuild_artifacts, ImportOptions, ImportParseWorkers, PipelineRunControl,
-    SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
+    current_import_processing_contract, import_root_with_options, ImportOptions,
+    ImportParseWorkers, SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
     SearchPublicationEmbeddingOutput, SearchPublicationVectorization, SearchPublicationVectorizer,
 };
 use meta_store::{
     ActiveSearchProjection, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease,
     ExactHitHydration, ImportTask, ImportTaskId, ImportTaskStatus, OwnedMetaStore, ReadMetaStore,
-    SearchProjectionServiceState, UnixTimestamp,
+    UnixTimestamp,
 };
 use process_containment::ContainedChild;
 
@@ -963,32 +962,13 @@ fn insert_import_task_for_options(
     vectorization: &SearchPublicationVectorization,
 ) {
     let contract = current_import_processing_contract(options).unwrap();
-    store
-        .activate_migration_rebuild_contract(&contract, task.queued_at)
-        .unwrap();
-    let control = PipelineRunControl::default();
-    prepare_migration_rebuild_artifacts(store, task.queued_at, &control).unwrap();
-    finalize_migration_rebuild(store, task.queued_at, &contract, vectorization, &control).unwrap();
-    assert_eq!(
-        store.search_projection_state().unwrap().service_state,
-        SearchProjectionServiceState::Ready
+    support::insert_import_task_with_scope_for_contract(
+        store,
+        task,
+        &support::empty_import_scan_scope(task),
+        &contract,
+        vectorization,
     );
-    let queued = ImportTask {
-        status: ImportTaskStatus::Queued,
-        started_at: None,
-        ..task.clone()
-    };
-    store
-        .insert_import_task_with_scan_scope(
-            &queued,
-            &support::empty_import_scan_scope(&queued),
-            &contract,
-        )
-        .unwrap();
-    store
-        .claim_observed_import_task_for_worker(&queued, task.started_at.unwrap())
-        .unwrap()
-        .unwrap();
 }
 
 struct SyntheticVectorizer;

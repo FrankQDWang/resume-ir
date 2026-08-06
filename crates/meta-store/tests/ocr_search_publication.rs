@@ -5,9 +5,10 @@ use core_domain::{
 use meta_store::{
     ClassificationStatus, CurrentClassifierEpoch, FullTextSnapshotDescriptor, IngestJobStatus,
     OcrSearchPublicationCommit, ProjectedDocumentSnapshot, ReasonCode, ResumeVersionClassification,
-    ReviewDisposition, SearchPublicationCommit, SearchPublicationDraft, SearchPublicationFailure,
-    SearchPublicationOutcome, SearchPublicationState, SearchPublicationValidation,
-    SourceRevisionTriage, TerminalDocumentUpdate, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
+    ReviewDisposition, ScanTrigger, SearchPublicationCommit, SearchPublicationDraft,
+    SearchPublicationFailure, SearchPublicationOutcome, SearchPublicationState,
+    SearchPublicationValidation, SourceRevisionTriage, TerminalDocumentUpdate,
+    VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
 };
 
 mod support;
@@ -26,7 +27,7 @@ fn failed_ocr_commit_rolls_back_inserted_facts_and_leaves_durable_cleanup_to_the
     let mut document = Document {
         id: DocumentId::from_non_secret_parts(&["ocr-atomic", "rollback"]),
         source_uri: "synthetic://ocr-atomic/rollback.pdf".to_string(),
-        normalized_path: "synthetic/ocr-atomic/rollback.pdf".to_string(),
+        normalized_path: "/synthetic/ocr-atomic/rollback.pdf".to_string(),
         file_name: "rollback.pdf".to_string(),
         extension: FileExtension::Pdf,
         byte_size: 128,
@@ -46,6 +47,32 @@ fn failed_ocr_commit_rolls_back_inserted_facts_and_leaves_durable_cleanup_to_the
     document.content_hash = Some(source_revision.content_hash.as_str().to_string());
     store.upsert_document(&document).unwrap();
     store.insert_source_revision(&source_revision).unwrap();
+    let root = store
+        .register_source_root(
+            "/synthetic/ocr-atomic",
+            "/synthetic/ocr-atomic",
+            "Synthetic OCR atomic root",
+            now(1_910_000_001),
+        )
+        .unwrap();
+    store
+        .begin_scan(
+            &root.id,
+            "ocr-atomic-scan",
+            ScanTrigger::Manual,
+            now(1_910_000_001),
+        )
+        .unwrap();
+    store
+        .observe_source_occurrence(
+            &root.id,
+            "rollback.pdf",
+            &document.id,
+            &source_revision.id,
+            "ocr-atomic-scan",
+            now(1_910_000_001),
+        )
+        .unwrap();
     store
         .insert_source_revision_triage(&SourceRevisionTriage {
             source_revision_id: source_revision.id.clone(),

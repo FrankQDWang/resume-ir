@@ -1567,31 +1567,7 @@ fn insert_queued_import_task(
         finished_at: None,
         updated_at: now,
     };
-    let scope = ImportScanScope {
-        import_task_id: task_id.clone(),
-        root_kind: ImportRootKind::Explicit,
-        root_preset: None,
-        scan_profile: ImportScanProfile::Explicit,
-        requested_root_path: path_str(canonical_root).to_string(),
-        canonical_root_path: path_str(canonical_root).to_string(),
-        files_discovered: 0,
-        ignored_entries: 0,
-        scan_errors: 0,
-        searchable_documents: 0,
-        ocr_required_documents: 0,
-        ocr_jobs_queued: 0,
-        failed_documents: 0,
-        deleted_documents: 0,
-        scan_budget_kind: None,
-        scan_budget_limit: None,
-        scan_budget_observed: None,
-        scan_budget_exhausted: false,
-        updated_at: now,
-    };
-    let contract = support::activate_reviewed_processing_contract(store, now);
-    store
-        .insert_import_task_with_scan_scope(&task, &scope, &contract)
-        .unwrap();
+    support::insert_import_task_with_reviewed_contract(store, &task);
     task_id
 }
 

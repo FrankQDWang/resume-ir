@@ -1536,6 +1536,8 @@ mod tests {
     ) -> meta_store::ClaimedOcrJob {
         let mut document = document.clone();
         document.status = DocumentStatus::OcrRequired;
+        let root_path = "/synthetic/ocr-publication";
+        document.normalized_path = format!("{root_path}/{}", document.file_name);
         let content_hash = document
             .content_hash
             .as_deref()
@@ -1546,6 +1548,28 @@ mod tests {
             SourceRevision::for_content(document.id.clone(), content_hash, document.byte_size);
         store.upsert_document(&document).unwrap();
         store.insert_source_revision(&source_revision).unwrap();
+        let root = store
+            .source_root_by_canonical_path(root_path)
+            .unwrap()
+            .unwrap_or_else(|| {
+                store
+                    .register_source_root(root_path, root_path, "OCR publication", now)
+                    .unwrap()
+            });
+        let scan_id = format!("ocr-publication-{}", document.id);
+        store
+            .begin_scan(&root.id, &scan_id, meta_store::ScanTrigger::Manual, now)
+            .unwrap();
+        store
+            .observe_source_occurrence(
+                &root.id,
+                &document.file_name,
+                &document.id,
+                &source_revision.id,
+                &scan_id,
+                now,
+            )
+            .unwrap();
         let triage_epoch = super::current_import_processing_contract(&ImportOptions::default())
             .unwrap()
             .source_triage_epoch();

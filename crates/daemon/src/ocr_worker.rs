@@ -428,9 +428,16 @@ fn run_claimed_ocr_job(
                     let entry =
                         OcrPageCacheEntry::failed_retryable(cache_key, "LanguageUnavailable", now)
                             .map_err(DaemonError::store)?;
-                    store
-                        .upsert_ocr_page_cache_entry(&entry)
-                        .map_err(DaemonError::store)?;
+                    if !store
+                        .upsert_ocr_page_cache_entry(job, &entry)
+                        .map_err(DaemonError::store)?
+                    {
+                        return Ok(OcrWorkerSummary {
+                            cache_writes,
+                            cache_hits,
+                            ..OcrWorkerSummary::default()
+                        });
+                    }
                     mark_ocr_job_failed_retryable(store, job, now)?;
                     return Ok(OcrWorkerSummary {
                         failed: 1,
@@ -442,9 +449,16 @@ fn run_claimed_ocr_job(
                     let entry =
                         OcrPageCacheEntry::failed_retryable(cache_key, "WorkerUnavailable", now)
                             .map_err(DaemonError::store)?;
-                    store
-                        .upsert_ocr_page_cache_entry(&entry)
-                        .map_err(DaemonError::store)?;
+                    if !store
+                        .upsert_ocr_page_cache_entry(job, &entry)
+                        .map_err(DaemonError::store)?
+                    {
+                        return Ok(OcrWorkerSummary {
+                            cache_writes,
+                            cache_hits,
+                            ..OcrWorkerSummary::default()
+                        });
+                    }
                     mark_ocr_job_failed_retryable(store, job, now)?;
                     return Ok(OcrWorkerSummary {
                         failed: 1,
@@ -486,9 +500,16 @@ fn run_claimed_ocr_job(
                     )
                 }
                 .map_err(DaemonError::store)?;
-                store
-                    .upsert_ocr_page_cache_entry(&entry)
-                    .map_err(DaemonError::store)?;
+                if !store
+                    .upsert_ocr_page_cache_entry(job, &entry)
+                    .map_err(DaemonError::store)?
+                {
+                    return Ok(OcrWorkerSummary {
+                        cache_writes,
+                        cache_hits,
+                        ..OcrWorkerSummary::default()
+                    });
+                }
                 if permanent {
                     mark_ocr_job_failed_permanent(store, job, now)?;
                 } else {
@@ -532,9 +553,16 @@ fn run_claimed_ocr_job(
                     )
                 }
                 .map_err(DaemonError::store)?;
-                store
-                    .upsert_ocr_page_cache_entry(&entry)
-                    .map_err(DaemonError::store)?;
+                if !store
+                    .upsert_ocr_page_cache_entry(job, &entry)
+                    .map_err(DaemonError::store)?
+                {
+                    return Ok(OcrWorkerSummary {
+                        cache_writes,
+                        cache_hits,
+                        ..OcrWorkerSummary::default()
+                    });
+                }
                 if permanent {
                     mark_ocr_job_failed_permanent(store, job, now)?;
                 } else {
@@ -558,9 +586,16 @@ fn run_claimed_ocr_job(
             now,
         )
         .map_err(DaemonError::store)?;
-        store
-            .upsert_ocr_page_cache_entry(&entry)
-            .map_err(DaemonError::store)?;
+        if !store
+            .upsert_ocr_page_cache_entry(job, &entry)
+            .map_err(DaemonError::store)?
+        {
+            return Ok(OcrWorkerSummary {
+                cache_writes,
+                cache_hits,
+                ..OcrWorkerSummary::default()
+            });
+        }
         page_texts.push(page.text().to_string());
         confidence_sum += page.confidence();
         confidence_count += 1;
@@ -659,15 +694,14 @@ fn run_claimed_ocr_job(
             "query generation install control became unresponsive",
         ));
     }
+    let database_committed = matches!(
+        &outcome,
+        Ok(import_pipeline::OcrTextIndexOutcome::Committed(_))
+    );
+    let disposition = ocr_runtime_publication_disposition(store, job, database_committed)?;
+    let activation_current =
+        disposition == crate::ipc::search_service::PublicationDisposition::Committed;
     if let Some(generation_handoff) = generation_handoff {
-        let disposition = if matches!(
-            &outcome,
-            Ok(import_pipeline::OcrTextIndexOutcome::Committed(_))
-        ) {
-            crate::ipc::search_service::PublicationDisposition::Committed
-        } else {
-            crate::ipc::search_service::PublicationDisposition::Aborted
-        };
         let finalized = generation_handoff
             .finish_publication(disposition)
             .map_err(|_| {
@@ -686,14 +720,30 @@ fn run_claimed_ocr_job(
         Err(error) => return Err(DaemonError::import(error)),
     };
     Ok(OcrWorkerSummary {
-        processed: usize::from(matches!(
-            outcome,
-            import_pipeline::OcrTextIndexOutcome::Committed(_)
-        )),
+        processed: usize::from(
+            matches!(outcome, import_pipeline::OcrTextIndexOutcome::Committed(_))
+                && activation_current,
+        ),
         cache_writes,
         cache_hits,
         ..OcrWorkerSummary::default()
     })
+}
+
+pub(crate) fn ocr_runtime_publication_disposition(
+    store: &OwnedMetaStore,
+    job: &meta_store::ClaimedOcrJob,
+    database_committed: bool,
+) -> Result<crate::ipc::search_service::PublicationDisposition> {
+    if database_committed
+        && store
+            .ocr_publication_activation_is_current(job)
+            .map_err(DaemonError::store)?
+    {
+        Ok(crate::ipc::search_service::PublicationDisposition::Committed)
+    } else {
+        Ok(crate::ipc::search_service::PublicationDisposition::Aborted)
+    }
 }
 
 struct OcrExecutionControl {

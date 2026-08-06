@@ -11,7 +11,7 @@ use meta_store::{
     ClassificationStatus, ContentDigest, CurrentClassifierEpoch, Document, DocumentId,
     DocumentStatus, FileExtension, ImportProcessingContract, ImportRootKind, ImportScanProfile,
     ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IngestJobId, IngestJobStatus,
-    MetaStoreErrorClass, OwnedMetaStore, ReasonCode, SearchProjectionServiceState,
+    MetaStoreErrorClass, OwnedMetaStore, ReasonCode, ScanTrigger, SearchProjectionServiceState,
     SearchRepairReason, SourceRevision, SourceRevisionTriage, UnixTimestamp, CLASSIFIER_EPOCH,
 };
 
@@ -22,7 +22,7 @@ use crate::import_worker::{
 use crate::ipc::routes::status::{
     projection_query_error, status_json_with, unavailable_status_json,
 };
-use crate::ocr_worker::run_ocr_worker_once;
+use crate::ocr_worker::{ocr_runtime_publication_disposition, run_ocr_worker_once};
 use crate::run_options::RunOptions;
 use crate::store_access::open_owned_store;
 use crate::worker_runtime::run_fault_priority_gate;
@@ -409,6 +409,49 @@ fn repair_blocked_projection_keeps_ocr_queued_across_worker_ticks() {
     let _ = fs::remove_dir_all(data_dir);
 }
 
+#[test]
+fn deletion_after_ocr_database_commit_aborts_staged_runtime_activation() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "resume-ir-daemon-ocr-activation-fence-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&data_dir).unwrap();
+    let store = open_test_store(&data_dir);
+    let now = UnixTimestamp::from_unix_seconds(1_800_281_200);
+    enqueue_ocr_job_for_worker_gate(&data_dir, &store, now, "activation-fence");
+    let claimed = store.claim_next_ocr_job(now).unwrap().unwrap();
+    store
+        .update_job_status(
+            &claimed.job.id,
+            IngestJobStatus::Completed,
+            UnixTimestamp::from_unix_seconds(1_800_281_201),
+        )
+        .unwrap();
+    assert_eq!(
+        ocr_runtime_publication_disposition(&store, &claimed, true).unwrap(),
+        ipc::search_service::PublicationDisposition::Committed
+    );
+    let root = store
+        .source_root_by_canonical_path(data_dir.to_str().unwrap())
+        .unwrap()
+        .unwrap();
+    store
+        .begin_source_root_deletion(&root.id, UnixTimestamp::from_unix_seconds(1_800_281_202))
+        .unwrap();
+
+    assert_eq!(
+        ocr_runtime_publication_disposition(&store, &claimed, true).unwrap(),
+        ipc::search_service::PublicationDisposition::Aborted
+    );
+
+    drop(store);
+    let _ = fs::remove_dir_all(data_dir);
+}
+
 fn enqueue_ocr_job_for_worker_gate(
     data_dir: &std::path::Path,
     store: &OwnedMetaStore,
@@ -437,6 +480,29 @@ fn enqueue_ocr_job_for_worker_gate(
         .unwrap();
     let source_revision = SourceRevision::for_content(document_id, digest, 32);
     store.insert_source_revision(&source_revision).unwrap();
+    let root_path = data_dir.to_str().unwrap();
+    let root = store
+        .source_root_by_canonical_path(root_path)
+        .unwrap()
+        .unwrap_or_else(|| {
+            store
+                .register_source_root(root_path, root_path, "Daemon OCR gate", now)
+                .unwrap()
+        });
+    let scan_id = format!("daemon-ocr-gate-{fixture_id}");
+    store
+        .begin_scan(&root.id, &scan_id, ScanTrigger::Manual, now)
+        .unwrap();
+    store
+        .observe_source_occurrence(
+            &root.id,
+            &format!("synthetic-{fixture_id}-scanned.pdf"),
+            &source_revision.document_id,
+            &source_revision.id,
+            &scan_id,
+            now,
+        )
+        .unwrap();
     store
         .insert_source_revision_triage(&SourceRevisionTriage {
             source_revision_id: source_revision.id.clone(),

@@ -1,8 +1,10 @@
 use super::*;
 use crate::{
-    schema_v37, schema_v38, source_root_commit_fence as fence, EphemeralMetaStore,
-    ImportProcessingContract, ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask,
-    ImportTaskId, ImportTaskStatus, MetaStoreErrorClass, ScanTrigger, SourceRoot, SourceRootId,
+    schema_v37, schema_v38, source_root_commit_fence as fence, ClassificationStatus, ContentDigest,
+    CurrentClassifierEpoch, Document, DocumentId, DocumentStatus, EphemeralMetaStore,
+    FileExtension, ImportProcessingContract, ImportRootKind, ImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, IngestJobStatus, MetaStoreErrorClass, ReasonCode,
+    ScanTrigger, SourceRevision, SourceRevisionTriage, SourceRoot, SourceRootId,
     SourceRootScanCoordination, UnixTimestamp, CLASSIFIER_EPOCH,
 };
 
@@ -124,6 +126,113 @@ fn pdf_reprocess_backfill_uses_a_bounded_lookup_and_leaves_no_schema_artifact() 
             )
             .unwrap(),
         0
+    );
+}
+
+#[test]
+fn v38_running_ocr_job_reopens_without_authority_then_reclaims_with_v39_fence() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_800_500_900);
+    let root_path = "/synthetic/v38-legacy-ocr";
+    let root = store
+        .register_source_root(root_path, root_path, "Legacy OCR", now)
+        .unwrap();
+    store
+        .begin_scan(&root.id, "legacy-ocr-scan", ScanTrigger::Manual, now)
+        .unwrap();
+    let content_hash = ContentDigest::from_bytes(b"synthetic legacy OCR source");
+    let document = Document {
+        id: DocumentId::from_non_secret_parts(&["v38", "legacy-ocr"]),
+        source_uri: "synthetic://v38/legacy-ocr.pdf".to_string(),
+        normalized_path: format!("{root_path}/legacy-ocr.pdf"),
+        file_name: "legacy-ocr.pdf".to_string(),
+        extension: FileExtension::Pdf,
+        byte_size: 64,
+        mtime: now,
+        content_hash: Some(content_hash.as_str().to_string()),
+        text_hash: None,
+        is_deleted: false,
+        created_at: now,
+        updated_at: now,
+        status: DocumentStatus::OcrRequired,
+    };
+    let revision = SourceRevision::for_content(document.id.clone(), content_hash, 64);
+    store.upsert_document(&document).unwrap();
+    store.insert_source_revision(&revision).unwrap();
+    store
+        .observe_source_occurrence(
+            &root.id,
+            "legacy-ocr.pdf",
+            &document.id,
+            &revision.id,
+            "legacy-ocr-scan",
+            now,
+        )
+        .unwrap();
+    store
+        .insert_source_revision_triage(&SourceRevisionTriage {
+            source_revision_id: revision.id.clone(),
+            status: ClassificationStatus::OcrBacklog,
+            triage_epoch: CLASSIFIER_EPOCH.to_string(),
+            reason_codes: vec![ReasonCode::OcrRequired],
+            triaged_at: now,
+        })
+        .unwrap();
+    store
+        .enqueue_ocr_job_for_source_triage(
+            &revision.id,
+            CurrentClassifierEpoch::parse(CLASSIFIER_EPOCH).unwrap(),
+            now,
+        )
+        .unwrap();
+    let legacy_claim = store.claim_next_ocr_job(now).unwrap().unwrap();
+    store
+        .connection
+        .borrow()
+        .execute_batch(
+            "DROP TABLE ocr_claim_source_fence;
+             DELETE FROM forward_migration_history WHERE to_version = 39;
+             DELETE FROM schema_migrations WHERE version = 39;",
+        )
+        .unwrap();
+    {
+        let mut connection = store.connection.borrow_mut();
+        let transaction = connection.transaction().unwrap();
+        apply_v38_to_v39(&transaction).unwrap();
+        transaction.commit().unwrap();
+        validate_v39(&connection).unwrap();
+    }
+
+    assert!(!crate::source_root_ocr_claim_fence::is_current(
+        &store.connection.borrow(),
+        &legacy_claim,
+    )
+    .unwrap());
+    assert_eq!(
+        store
+            .recover_stale_running_ingest_jobs(
+                UnixTimestamp::from_unix_seconds(1_800_500_902),
+                UnixTimestamp::from_unix_seconds(1_800_500_901),
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .ingest_job_by_id(&legacy_claim.job.id)
+            .unwrap()
+            .unwrap()
+            .status,
+        IngestJobStatus::Interrupted
+    );
+    let reclaimed = store
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_500_903))
+        .unwrap()
+        .unwrap();
+    assert!(
+        crate::source_root_ocr_claim_fence::is_current(&store.connection.borrow(), &reclaimed,)
+            .unwrap()
     );
 }
 

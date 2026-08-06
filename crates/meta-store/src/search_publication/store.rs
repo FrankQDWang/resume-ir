@@ -4,10 +4,8 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use crate::migration_rebuild_barrier::migration_rebuild_barrier_token_matches;
 
 use crate::{
-    discard_superseded_ocr_claim_in_connection, document_status_to_storage,
-    file_extension_to_storage,
+    document_status_to_storage, file_extension_to_storage,
     immutable_search::seal_resume_version,
-    ocr_claim_is_current_in_connection,
     ocr_publication::{
         complete_ocr_search_publication_claim_in_connection,
         insert_ocr_search_publication_facts_in_connection, validate_ocr_search_publication_commit,
@@ -281,8 +279,8 @@ impl SearchPublicationSession {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
-        if !ocr_claim_is_current_in_connection(&transaction, publication.claimed)? {
-            discard_superseded_ocr_claim_in_connection(
+        if !crate::source_root_ocr_claim_fence::is_current(&transaction, publication.claimed)? {
+            crate::source_root_ocr_claim_fence::settle_superseded(
                 &transaction,
                 publication.claimed,
                 publication.search.now,

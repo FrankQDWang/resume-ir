@@ -158,7 +158,7 @@ FORWARD_MIGRATION_FEATURE_TRAIN_IDENTITY = {
     "train_final_schema": 35,
     "intermediate_schema_versions": [34],
     "current_product_version": "0.1.9",
-    "current_metadata_schema": 38,
+    "current_metadata_schema": 39,
     "pre_v29_runtime_migration_allowed": False,
     "future_schema_read_allowed": False,
     "migration_dual_reader_allowed": False,
@@ -765,18 +765,35 @@ def validate_forward_migration_feature_train(matrix: Mapping[str, object]) -> No
 
 
 def validate_current_metadata_schema_source() -> None:
-    schema_source = (
+    schema_v38_source = (
         ROOT / "crates" / "meta-store" / "src" / "schema_v38.rs"
     ).read_text(encoding="utf-8")
-    if "pub(super) const VERSION: u32 = 38;" not in schema_source:
+    if "pub(super) const VERSION: u32 = 38;" not in schema_v38_source:
         fail("crates/meta-store/src/schema_v38.rs: expected schema version 38")
+    schema_v39_source = (
+        ROOT / "crates" / "meta-store" / "src" / "schema_v39.rs"
+    ).read_text(encoding="utf-8")
+    if "pub(super) const VERSION: u32 = 39;" not in schema_v39_source:
+        fail("crates/meta-store/src/schema_v39.rs: expected schema version 39")
     lib_source = (
         ROOT / "crates" / "meta-store" / "src" / "lib.rs"
     ).read_text(encoding="utf-8")
-    if "pub const CURRENT_SCHEMA_VERSION: u32 = schema_v38::VERSION;" not in lib_source:
-        fail("crates/meta-store/src/lib.rs: CURRENT_SCHEMA_VERSION must use schema_v38")
-    if "DEFAULT 0" not in schema_source or "typeof(revocation_epoch) = 'integer'" not in schema_source:
+    if "pub const CURRENT_SCHEMA_VERSION: u32 = schema_v39::VERSION;" not in lib_source:
+        fail("crates/meta-store/src/lib.rs: CURRENT_SCHEMA_VERSION must use schema_v39")
+    if (
+        "DEFAULT 0" not in schema_v38_source
+        or "typeof(revocation_epoch) = 'integer'" not in schema_v38_source
+    ):
         fail("schema v38 must keep a fail-closed integer legacy epoch default")
+    for required in [
+        "CREATE TABLE ocr_claim_source_fence",
+        "FOREIGN KEY (ingest_job_id) REFERENCES ingest_job(id) ON DELETE CASCADE",
+        "FOREIGN KEY (root_id, relative_path)",
+        "REFERENCES source_occurrence(root_id, relative_path) ON DELETE CASCADE",
+        "typeof(root_revocation_epoch) = 'integer'",
+    ]:
+        if required not in schema_v39_source:
+            fail(f"schema v39 OCR claim fence is missing {required!r}")
 
     source_dir = ROOT / "crates" / "meta-store" / "src"
     production_sources = [
@@ -1063,7 +1080,7 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         "owner_kind": "attribution_evidence",
         "primary_benchmark_lane": "full_import_ocr_backlog",
         "current_schema_source": "crates/meta-store/src/lib.rs::CURRENT_SCHEMA_VERSION",
-        "current_metadata_schema": 38,
+        "current_metadata_schema": 39,
         "milestones": ["first_searchable", "keyword_ready", "embedding_complete",
                        "ocr_backlog_full_import"],
         "milestone_claim_mixing_allowed": False,
