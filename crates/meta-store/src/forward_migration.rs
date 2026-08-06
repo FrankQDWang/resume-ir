@@ -598,7 +598,7 @@ fn validate_v38(connection: &Connection) -> Result<()> {
             return Err(MetaStoreError::storage_invariant());
         }
     }
-    let invalid_epochs = connection
+    let (invalid_epochs, invalid_backfill, trigger_count) = connection
         .query_row(
             "SELECT
                 (SELECT COUNT(*) FROM source_root
@@ -606,39 +606,30 @@ fn validate_v38(connection: &Connection) -> Result<()> {
                     OR revocation_epoch NOT BETWEEN 0 AND ?1)
               + (SELECT COUNT(*) FROM scan_snapshot
                  WHERE typeof(root_revocation_epoch) <> 'integer'
-                    OR root_revocation_epoch NOT BETWEEN 0 AND ?1)",
+                    OR root_revocation_epoch NOT BETWEEN 0 AND ?1),
+                (SELECT COUNT(*) FROM source_root
+                 WHERE CASE
+                     WHEN EXISTS (
+                        SELECT 1 FROM source_root_deletion
+                        WHERE source_root_deletion.root_id = source_root.id
+                     ) THEN revocation_epoch < 1
+                     ELSE revocation_epoch <> 0
+                 END),
+                (SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'trigger'
+                   AND name = 'scan_snapshot_root_revocation_epoch_immutable')",
             [schema_v38::MAX_ROOT_REVOCATION_EPOCH],
-            |row| row.get::<_, i64>(0),
-        )
-        .map_err(MetaStoreError::storage)?;
-    if invalid_epochs != 0 {
-        return Err(MetaStoreError::storage_invariant());
-    }
-    let invalid_backfill = connection
-        .query_row(
-            "SELECT COUNT(*) FROM source_root
-             WHERE CASE
-                 WHEN EXISTS (
-                    SELECT 1 FROM source_root_deletion
-                    WHERE source_root_deletion.root_id = source_root.id
-                 ) THEN revocation_epoch < 1
-                 ELSE revocation_epoch <> 0
-             END",
-            [],
-            |row| row.get::<_, i64>(0),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
         )
         .map_err(MetaStoreError::storage)?;
     crate::source_root_commit_fence::validate_receipt_root_invariants(connection)?;
-    let trigger_count = connection
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_schema
-             WHERE type = 'trigger'
-               AND name = 'scan_snapshot_root_revocation_epoch_immutable'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map_err(MetaStoreError::storage)?;
-    if invalid_backfill != 0 || trigger_count != 1 {
+    if invalid_epochs != 0 || invalid_backfill != 0 || trigger_count != 1 {
         return Err(MetaStoreError::storage_invariant());
     }
     Ok(())
