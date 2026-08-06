@@ -10,19 +10,39 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "9fc99ecd942055ec4cfb21259830d7b9574a20de"
+    "git_head_sha": "c0d145826e0ca119f732417da7d018bd8f409cff"
   },
   "current_slice": "#446 durable source-root revocation epoch foundation",
   "hypothesis": {
     "id": "issue-446-source-root-revocation-epoch-foundation",
     "acceptance_cell": "w0_docs",
-    "expected_effect": "schema v38 durably binds source-root scans to a bounded revocation epoch, conservatively marks every extant root with deletion history as revoked generation 1, and advances the root epoch atomically with deletion admission while preserving current scan coalescing behavior",
+    "expected_effect": "schema v38 durably binds persisted import task, scope and scan identity to a bounded source-root revocation epoch, conservatively marks every extant root with deletion history as revoked generation 1, and advances the root epoch atomically with deletion admission while preserving current scan coalescing behavior",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/446",
     "after_measurement_ref": "PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation",
     "reprofile_ref": "not_applicable_correctness_slice",
     "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation"
+    },
+    {
+      "from": "red_check_written",
+      "to": "implementation_active",
+      "evidence_ref": "PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation"
+    },
+    {
+      "from": "evidence_review",
+      "to": "red_check_written",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/446"
+    },
     {
       "from": "slice_active",
       "to": "red_check_written",
@@ -3777,7 +3797,8 @@
       {"command":"cargo test -p meta-store --locked","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"},
       {"command":"cargo test -p resume-daemon --test s20_ipc startup_recovers_source_root_deletion_with_the_same_receipt --locked -- --exact","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"},
       {"command":"cargo clippy -p meta-store -p resume-daemon --all-targets --locked -- -D warnings and cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"},
-      {"command":"Issue #446 schema v38 focused and full meta-store tests, warnings-denied Clippy, format and governance gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation"}
+      {"command":"Issue #446 schema v38 focused and full meta-store tests, warnings-denied Clippy, format and governance gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation"},
+      {"command":"Issue #446 corrective durable task binding, unknown-phase rollback, migration and registration focused tests plus full verification","exit_code":0,"evidence_ref":"PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3792,10 +3813,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-446-source-root-revocation-epoch-foundation-2026-08-06",
-  "state_version": 680,
-  "previous_state_hash": "424bef7adf96549dbf365814dbe3f06ba8af932f9b29ce6d10be3611d747f8b7",
-  "expected_state_version": 680,
-  "last_confirmed_side_effect": "issue_446_implementation_verified",
+  "state_version": 684,
+  "previous_state_hash": "8321a286a2b657257c0a6e95b2b800e9c7c386f7f1d1d3eda1e439d8482b04f7",
+  "expected_state_version": 684,
+  "last_confirmed_side_effect": "issue_446_corrective_implementation_verified",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

@@ -522,9 +522,61 @@ fn v38_migration_conservatively_revokes_failed_receipt_history() {
             .unwrap(),
         0
     );
-    assert!(
-        crate::source_root_commit_fence::validate_scan_commit(&connection, &failed_root.id, 0,)
-            .is_err()
+    assert!(crate::source_root_commit_fence::validate_scan_commit(
+        &connection,
+        &failed_root.id,
+        &ImportTaskId::from_non_secret_parts(&["v38-root-fence", "legacy-failed"]),
+    )
+    .is_err());
+}
+
+#[test]
+fn v38_migration_rejects_unknown_receipt_phase_without_schema_side_effects() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.initialize_empty_schema(schema_v37::VERSION).unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_800_500_750);
+    let root = synthetic_root(&store, "v38-unknown-migration-phase", now);
+    store
+        .connection
+        .borrow()
+        .execute_batch("PRAGMA ignore_check_constraints = ON;")
+        .unwrap();
+    store
+        .connection
+        .borrow()
+        .execute(
+            "INSERT INTO source_root_deletion (
+                root_id, canonical_path, phase, affected_documents, removed_documents,
+                started_at_seconds, updated_at_seconds, checkpoint_protocol_version
+             ) VALUES (?1, ?2, 'future', 0, 0, ?3, ?3, ?4)",
+            rusqlite::params![
+                root.id.as_str(),
+                root.canonical_path,
+                now.as_unix_seconds(),
+                schema_v37::SNAPSHOT_INVARIANT_V2,
+            ],
+        )
+        .unwrap();
+    store
+        .connection
+        .borrow()
+        .execute_batch("PRAGMA ignore_check_constraints = OFF;")
+        .unwrap();
+
+    let mut connection = store.connection.borrow_mut();
+    let transaction = connection.transaction().unwrap();
+    assert!(apply_v37_to_v38(&transaction).is_err());
+    drop(transaction);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('source_root')
+                 WHERE name = 'revocation_epoch'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
     );
 }
 
@@ -555,18 +607,112 @@ fn v38_scan_commit_and_deletion_epoch_fail_closed_atomically() {
         SourceRootScanCoordination::Started { .. }
     ));
     assert_eq!(scan_epoch(&store, first.0.id.as_str()), 0);
+    crate::source_root_commit_fence::validate_scan_commit(
+        &store.connection.borrow(),
+        &root.id,
+        &first.0.id,
+    )
+    .unwrap();
+
+    let standalone = synthetic_root(&store, "v38-standalone", now);
+    let standalone_id = ImportTaskId::from_non_secret_parts(&["v38-root-fence", "standalone"]);
+    store
+        .begin_scan(
+            &standalone.id,
+            standalone_id.as_str(),
+            ScanTrigger::Manual,
+            now,
+        )
+        .unwrap();
+    assert!(crate::source_root_commit_fence::validate_scan_commit(
+        &store.connection.borrow(),
+        &standalone.id,
+        &standalone_id,
+    )
+    .is_err());
+    assert!(crate::source_root_commit_fence::validate_scan_commit(
+        &store.connection.borrow(),
+        &standalone.id,
+        &first.0.id,
+    )
+    .is_err());
+
+    let partial = synthetic_root(&store, "v38-partial-binding", now);
+    let partial_scan = queued_scan("v38-partial-binding", &partial.canonical_path, now);
+    store
+        .coordinate_source_root_scan(
+            &partial.id,
+            ScanTrigger::Manual,
+            &partial_scan.0,
+            &partial_scan.1,
+            &contract,
+            now,
+        )
+        .unwrap();
+    store
+        .connection
+        .borrow()
+        .execute(
+            "DELETE FROM import_scan_scope WHERE import_task_id = ?1",
+            [partial_scan.0.id.as_str()],
+        )
+        .unwrap();
+    assert!(crate::source_root_commit_fence::validate_scan_commit(
+        &store.connection.borrow(),
+        &partial.id,
+        &partial_scan.0.id,
+    )
+    .is_err());
+    store.upsert_import_scan_scope(&partial_scan.1).unwrap();
+    store
+        .connection
+        .borrow()
+        .execute(
+            "DELETE FROM scan_snapshot WHERE id = ?1",
+            [partial_scan.0.id.as_str()],
+        )
+        .unwrap();
+    assert!(crate::source_root_commit_fence::validate_scan_commit(
+        &store.connection.borrow(),
+        &partial.id,
+        &partial_scan.0.id,
+    )
+    .is_err());
+
     store.begin_source_root_deletion(&root.id, now).unwrap();
     assert_eq!(root_epoch(&store, &root.id), 1);
     assert!(crate::source_root_commit_fence::validate_scan_commit(
         &store.connection.borrow(),
         &root.id,
-        0,
+        &first.0.id,
     )
     .is_err());
+
+    let stale = synthetic_root(&store, "v38-stale-terminal", now);
+    let stale_scan = queued_scan("v38-stale-terminal", &stale.canonical_path, now);
+    store
+        .coordinate_source_root_scan(
+            &stale.id,
+            ScanTrigger::Manual,
+            &stale_scan.0,
+            &stale_scan.1,
+            &contract,
+            now,
+        )
+        .unwrap();
+    store.begin_source_root_deletion(&stale.id, now).unwrap();
+    store
+        .connection
+        .borrow()
+        .execute(
+            "UPDATE source_root_deletion SET phase = 'failed' WHERE root_id = ?1",
+            [stale.id.as_str()],
+        )
+        .unwrap();
     assert!(crate::source_root_commit_fence::validate_scan_commit(
         &store.connection.borrow(),
-        &root.id,
-        1,
+        &stale.id,
+        &stale_scan.0.id,
     )
     .is_err());
 
@@ -710,6 +856,9 @@ fn v38_scan_commit_and_deletion_epoch_fail_closed_atomically() {
     assert_eq!(persisted, (0, 0, 0));
 
     store
+        .begin_source_root_deletion_attempt(&root.id, now)
+        .unwrap();
+    store
         .connection
         .borrow()
         .execute_batch("PRAGMA ignore_check_constraints = ON;")
@@ -728,8 +877,28 @@ fn v38_scan_commit_and_deletion_epoch_fail_closed_atomically() {
         .execute_batch("PRAGMA ignore_check_constraints = OFF;")
         .unwrap();
     let before = total_changes(&store);
-    assert!(
-        crate::source_root_commit_fence::admit_scan(&store.connection.borrow(), &root.id,).is_err()
+    let witness = deletion_witness(&store, &root.id);
+    assert_eq!(
+        store
+            .begin_source_root_deletion(&root.id, now)
+            .unwrap_err()
+            .class(),
+        crate::MetaStoreErrorClass::InvalidValue
+    );
+    assert_eq!(total_changes(&store) - before, 0);
+    assert_eq!(deletion_witness(&store, &root.id), witness);
+    let before = total_changes(&store);
+    assert_eq!(
+        store
+            .register_source_root(
+                &root.canonical_path,
+                &root.requested_path,
+                &root.display_label,
+                now,
+            )
+            .unwrap_err()
+            .class(),
+        crate::MetaStoreErrorClass::InvalidValue
     );
     assert_eq!(total_changes(&store) - before, 0);
 }
@@ -812,5 +981,66 @@ fn total_changes(store: &EphemeralMetaStore) -> i64 {
         .connection
         .borrow()
         .query_row("SELECT total_changes()", [], |row| row.get(0))
+        .unwrap()
+}
+
+type ReceiptWitness = (i64, String, String, i64, i64, i64, i64, Option<i64>);
+type AttemptWitness = (
+    i64,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+);
+type DeletionWitness = (ReceiptWitness, AttemptWitness, i64);
+
+fn deletion_witness(store: &EphemeralMetaStore, root_id: &crate::SourceRootId) -> DeletionWitness {
+    store
+        .connection
+        .borrow()
+        .query_row(
+            "SELECT root.revocation_epoch, deletion.phase, deletion.canonical_path,
+                    deletion.affected_documents, deletion.removed_documents,
+                    deletion.started_at_seconds, deletion.updated_at_seconds,
+                    deletion.completed_at_seconds,
+                    (SELECT attempt_count FROM source_root_deletion_attempt_evidence
+                     WHERE root_id = root.id),
+                    (SELECT last_attempt_at_seconds FROM source_root_deletion_attempt_evidence
+                     WHERE root_id = root.id),
+                    (SELECT last_error_phase FROM source_root_deletion_attempt_evidence
+                     WHERE root_id = root.id),
+                    (SELECT last_error_code FROM source_root_deletion_attempt_evidence
+                     WHERE root_id = root.id),
+                    (SELECT last_error_at_seconds FROM source_root_deletion_attempt_evidence
+                     WHERE root_id = root.id),
+                    (SELECT COUNT(*) FROM source_root_deletion_document
+                     WHERE root_id = root.id)
+             FROM source_root AS root
+             JOIN source_root_deletion AS deletion ON deletion.root_id = root.id
+             WHERE root.id = ?1",
+            [root_id.as_str()],
+            |row| {
+                Ok((
+                    (
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ),
+                    (
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                        row.get(11)?,
+                        row.get(12)?,
+                    ),
+                    row.get(13)?,
+                ))
+            },
+        )
         .unwrap()
 }

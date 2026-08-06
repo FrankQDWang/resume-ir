@@ -628,16 +628,7 @@ fn validate_v38(connection: &Connection) -> Result<()> {
             |row| row.get::<_, i64>(0),
         )
         .map_err(MetaStoreError::storage)?;
-    let invalid_receipts = connection
-        .query_row(
-            "SELECT COUNT(*) FROM source_root_deletion AS deletion
-             WHERE (deletion.phase = 'complete') = EXISTS(
-                 SELECT 1 FROM source_root WHERE id = deletion.root_id
-             )",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map_err(MetaStoreError::storage)?;
+    crate::source_root_commit_fence::validate_receipt_root_invariants(connection)?;
     let trigger_count = connection
         .query_row(
             "SELECT COUNT(*) FROM sqlite_schema
@@ -647,17 +638,8 @@ fn validate_v38(connection: &Connection) -> Result<()> {
             |row| row.get::<_, i64>(0),
         )
         .map_err(MetaStoreError::storage)?;
-    if invalid_backfill != 0 || invalid_receipts != 0 || trigger_count != 1 {
+    if invalid_backfill != 0 || trigger_count != 1 {
         return Err(MetaStoreError::storage_invariant());
-    }
-    let mut phases = connection
-        .prepare("SELECT phase FROM source_root_deletion ORDER BY root_id")
-        .map_err(MetaStoreError::storage)?;
-    for phase in phases
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(MetaStoreError::storage)?
-    {
-        crate::SourceRootDeletionPhase::parse(&phase.map_err(MetaStoreError::storage)?)?;
     }
     Ok(())
 }
