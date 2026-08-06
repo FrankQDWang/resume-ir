@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, schema_v35, schema_v36,
-    schema_v37, MetaStoreError, Result, SourceRootId,
+    schema_v37, schema_v38, MetaStoreError, Result, SourceRootId,
 };
 
 const V29_TO_V30_NAME: &str = "metadata-forward-migration-history";
@@ -16,6 +16,7 @@ const V33_TO_V34_NAME: &str = "processing-contract-upgrade-coordinator";
 const V34_TO_V35_NAME: &str = "source-file-observation";
 const V35_TO_V36_NAME: &str = "source-root-deletion-attempt-evidence";
 const V36_TO_V37_NAME: &str = "source-root-deletion-checkpoint-protocol";
+const V37_TO_V38_NAME: &str = "source-root-revocation-epoch";
 const PDFIUM_PARSER_CONTRACT: &str = "parser-pdfium-v2";
 const PDF_REPROCESS_LOOKUP_INDEX: &str = "__migration_pdf_reprocess_resume_lookup";
 
@@ -91,7 +92,7 @@ pub(super) fn validate_chain(connection: &Connection, from: u32, to: u32) -> Res
 }
 
 pub(super) fn apply_current_schema(connection: &mut Connection, from: u32) -> Result<()> {
-    apply_chain(connection, from, schema_v37::VERSION)
+    apply_chain(connection, from, schema_v38::VERSION)
 }
 
 fn apply_step(connection: &mut Connection, step: &MigrationStep) -> Result<()> {
@@ -567,7 +568,101 @@ fn validate_v37(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn registry() -> [MigrationStep; 8] {
+fn apply_v37_to_v38(transaction: &Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(schema_v38::SCHEMA)
+        .map_err(MetaStoreError::migration)?;
+    crate::source_root_commit_fence::backfill_v38(transaction)
+}
+
+fn validate_v38(connection: &Connection) -> Result<()> {
+    for (table, column) in [
+        ("source_root", "revocation_epoch"),
+        ("scan_snapshot", "root_revocation_epoch"),
+    ] {
+        let definition = connection
+            .query_row(
+                "SELECT type, \"notnull\", dflt_value
+                 FROM pragma_table_info(?1) WHERE name = ?2",
+                params![table, column],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .map_err(MetaStoreError::storage)?;
+        if definition != ("INTEGER".to_string(), 1, Some("0".to_string())) {
+            return Err(MetaStoreError::storage_invariant());
+        }
+    }
+    let invalid_epochs = connection
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM source_root
+                 WHERE typeof(revocation_epoch) <> 'integer'
+                    OR revocation_epoch NOT BETWEEN 0 AND ?1)
+              + (SELECT COUNT(*) FROM scan_snapshot
+                 WHERE typeof(root_revocation_epoch) <> 'integer'
+                    OR root_revocation_epoch NOT BETWEEN 0 AND ?1)",
+            [schema_v38::MAX_ROOT_REVOCATION_EPOCH],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    if invalid_epochs != 0 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let invalid_backfill = connection
+        .query_row(
+            "SELECT COUNT(*) FROM source_root
+             WHERE CASE
+                 WHEN EXISTS (
+                    SELECT 1 FROM source_root_deletion
+                    WHERE source_root_deletion.root_id = source_root.id
+                 ) THEN revocation_epoch < 1
+                 ELSE revocation_epoch <> 0
+             END",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    let invalid_receipts = connection
+        .query_row(
+            "SELECT COUNT(*) FROM source_root_deletion AS deletion
+             WHERE (deletion.phase = 'complete') = EXISTS(
+                 SELECT 1 FROM source_root WHERE id = deletion.root_id
+             )",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    let trigger_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_schema
+             WHERE type = 'trigger'
+               AND name = 'scan_snapshot_root_revocation_epoch_immutable'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    if invalid_backfill != 0 || invalid_receipts != 0 || trigger_count != 1 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let mut phases = connection
+        .prepare("SELECT phase FROM source_root_deletion ORDER BY root_id")
+        .map_err(MetaStoreError::storage)?;
+    for phase in phases
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(MetaStoreError::storage)?
+    {
+        crate::SourceRootDeletionPhase::parse(&phase.map_err(MetaStoreError::storage)?)?;
+    }
+    Ok(())
+}
+
+fn registry() -> [MigrationStep; 9] {
     [
         MigrationStep {
             from: schema_v29::VERSION,
@@ -632,6 +727,14 @@ fn registry() -> [MigrationStep; 8] {
             schema: schema_v37::SCHEMA,
             apply: apply_v36_to_v37,
             validate: validate_v37,
+        },
+        MigrationStep {
+            from: schema_v37::VERSION,
+            to: schema_v38::VERSION,
+            name: V37_TO_V38_NAME,
+            schema: schema_v38::SCHEMA,
+            apply: apply_v37_to_v38,
+            validate: validate_v38,
         },
     ]
 }

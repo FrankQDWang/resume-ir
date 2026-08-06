@@ -12,7 +12,7 @@ use crate::{
         sync_parent_directory, validate_owner_regular_metadata, ActiveStoreManifest,
     },
     schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, schema_v35, schema_v36,
-    schema_v37, MetaStoreError, Result,
+    schema_v37, schema_v38, MetaStoreError, Result,
 };
 
 pub(super) const FILE_NAME: &str = "metadata-forward-migration-receipt.v1";
@@ -180,7 +180,7 @@ fn validate(receipt: &MigrationReceipt) -> Result<()> {
             | schema_v35::VERSION
     ) && receipt.target.schema_version == schema_v36::VERSION
         && receipt.staging_file == current_staging;
-    let current_pair = matches!(
+    let prior_v37_pair = matches!(
         receipt.source.schema_version,
         schema_v29::VERSION
             | schema_v30::VERSION
@@ -192,7 +192,20 @@ fn validate(receipt: &MigrationReceipt) -> Result<()> {
             | schema_v36::VERSION
     ) && receipt.target.schema_version == schema_v37::VERSION
         && receipt.staging_file == current_staging;
-    if (!legacy_v30_pair && !prior_v35_pair && !prior_v36_pair && !current_pair)
+    let current_pair = matches!(
+        receipt.source.schema_version,
+        schema_v29::VERSION
+            | schema_v30::VERSION
+            | schema_v31::VERSION
+            | schema_v32::VERSION
+            | schema_v33::VERSION
+            | schema_v34::VERSION
+            | schema_v35::VERSION
+            | schema_v36::VERSION
+            | schema_v37::VERSION
+    ) && receipt.target.schema_version == schema_v38::VERSION
+        && receipt.staging_file == current_staging;
+    if (!legacy_v30_pair && !prior_v35_pair && !prior_v36_pair && !prior_v37_pair && !current_pair)
         || receipt.source.store_id_digest != receipt.target.store_id_digest
         || receipt.target.file_name != expected_target
     {

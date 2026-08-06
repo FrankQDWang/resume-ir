@@ -69,10 +69,12 @@ mod schema_v34;
 mod schema_v35;
 mod schema_v36;
 mod schema_v37;
+mod schema_v38;
 mod search_publication;
 mod search_publication_session;
 mod search_snapshot;
 mod source_file_observation;
+mod source_root_commit_fence;
 mod source_root_deletion;
 mod source_root_privacy;
 mod source_roots;
@@ -127,7 +129,7 @@ pub type OwnedMetaStore = MetadataStore<OwnedStoreAccess>;
 pub type EphemeralMetaStore = MetadataStore<EphemeralStoreAccess>;
 
 /// Exact metadata schema accepted and produced by the current binary.
-pub const CURRENT_SCHEMA_VERSION: u32 = schema_v37::VERSION;
+pub const CURRENT_SCHEMA_VERSION: u32 = schema_v38::VERSION;
 
 pub use source_file_observation::{
     SourceFileObservation, StrongSourceFileObservation, SOURCE_FILE_OBSERVATION_ASSURANCE,
@@ -1001,7 +1003,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
     }
 
     fn initialize_current_schema(&self) -> Result<MigrationReport> {
-        self.initialize_empty_schema(schema_v37::VERSION)
+        self.initialize_empty_schema(schema_v38::VERSION)
     }
 
     fn initialize_empty_schema(&self, target_version: u32) -> Result<MigrationReport> {
@@ -1023,7 +1025,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
     /// Test-only entrypoint for constructing historical schema fixtures.
     #[cfg(any(test, feature = "migration-test-support"))]
     pub fn run_migrations(&self) -> Result<MigrationReport> {
-        self.apply_schema_history_to(schema_v37::VERSION)
+        self.apply_schema_history_to(schema_v38::VERSION)
     }
 
     fn apply_schema_history_to(&self, target_version: u32) -> Result<MigrationReport> {

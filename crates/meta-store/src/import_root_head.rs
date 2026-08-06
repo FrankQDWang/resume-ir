@@ -252,7 +252,7 @@ fn coordinate_configured_head(
     contract: &ImportProcessingContract,
 ) -> Result<ImportRootTaskHeadOutcome> {
     validate_configured_request(task, scope)?;
-    if source_root_is_deleting(connection, &task.root_path)? {
+    if super::source_root_commit_fence::source_root_is_deleting(connection, &task.root_path)? {
         return Ok(ImportRootTaskHeadOutcome::RootPaused);
     }
     let root_status = import_root_control_status_from_connection(connection, &task.root_path)?;
@@ -357,7 +357,7 @@ fn coordinate_migration_head(
     if unpublished_migration_contract_id(connection)?.as_deref() != Some(contract.id().as_str()) {
         return Ok(ImportRootTaskHeadOutcome::MigrationRebuildSuperseded);
     }
-    if source_root_is_deleting(connection, canonical_root_path)? {
+    if super::source_root_commit_fence::source_root_is_deleting(connection, canonical_root_path)? {
         return Ok(ImportRootTaskHeadOutcome::RootPaused);
     }
     match import_root_control_status_from_connection(connection, canonical_root_path)? {
@@ -523,23 +523,6 @@ fn coordinate_migration_head(
         purpose: ImportTaskPurpose::MigrationRebuildFullCorpus,
         cancellation_requests,
     })
-}
-
-fn source_root_is_deleting(connection: &Connection, canonical_root_path: &str) -> Result<bool> {
-    connection
-        .query_row(
-            "SELECT EXISTS (
-                SELECT 1
-                FROM source_root
-                JOIN source_root_deletion AS deletion
-                  ON deletion.root_id = source_root.id
-                WHERE source_root.canonical_path = ?1
-                  AND deletion.phase NOT IN ('complete', 'failed')
-            )",
-            params![canonical_root_path],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(MetaStoreError::storage)
 }
 
 fn validate_configured_request(task: &ImportTask, scope: &ImportScanScope) -> Result<()> {
