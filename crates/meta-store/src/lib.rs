@@ -7100,6 +7100,63 @@ fn discard_stale_ocr_jobs_in_connection(
         .map_err(MetaStoreError::storage)
 }
 
+fn discard_unclaimable_ocr_jobs_in_connection(
+    connection: &Connection,
+    job_ids: &[IngestJobId],
+    discarded_at: UnixTimestamp,
+) -> Result<usize> {
+    let discarded_at = discarded_at.as_unix_seconds();
+    let mut discarded = 0;
+    for job_id in job_ids {
+        let changed = connection
+            .execute(
+                "UPDATE ingest_job
+                 SET status = ?1,
+                     started_at_seconds = COALESCE(started_at_seconds, ?2),
+                     finished_at_seconds = ?2, updated_at_seconds = ?2, failure_kind = NULL
+                 WHERE id = ?3 AND kind = ?4
+                   AND (
+                     status = ?5
+                     OR (status IN (?6, ?7) AND attempt_count < max_attempts)
+                   )",
+                params![
+                    ingest_job_status_to_storage(IngestJobStatus::Completed),
+                    discarded_at,
+                    job_id.as_str(),
+                    ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                    ingest_job_status_to_storage(IngestJobStatus::Queued),
+                    ingest_job_status_to_storage(IngestJobStatus::Interrupted),
+                    ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        if changed > 1 {
+            return Err(MetaStoreError::storage_invariant());
+        }
+        if changed == 1 {
+            let inserted = connection
+                .execute(
+                    "INSERT INTO ocr_job_discard (
+                        ingest_job_id, reason, discarded_at_seconds
+                     ) VALUES (?1, ?2, ?3)",
+                    params![
+                        job_id.as_str(),
+                        ocr_job_discard_reason_to_storage(
+                            OcrJobDiscardReason::SourceRevisionNoLongerCurrent
+                        ),
+                        discarded_at,
+                    ],
+                )
+                .map_err(MetaStoreError::storage)?;
+            if inserted != 1 {
+                return Err(MetaStoreError::storage_invariant());
+            }
+            discarded += 1;
+        }
+    }
+    Ok(discarded)
+}
+
 fn assign_candidate_from_hashed_contacts_in_connection(
     connection: &Connection,
     version_id: &ResumeVersionId,

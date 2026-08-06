@@ -11,6 +11,7 @@ use crate::{
 };
 
 const CLAIM_CANDIDATE_LIMIT: i64 = 256;
+const CLAIM_BATCH_LIMIT: usize = 2;
 
 const CLAIM_NEXT_JOBS_SQL: &str =
     "SELECT job.id, job.document_id, job.queued_at_seconds, job.rowid AS job_rowid
@@ -82,6 +83,10 @@ pub(super) fn claim_next_candidates_sql() -> String {
     )
 }
 
+pub(super) fn claim_candidate_jobs_sql() -> &'static str {
+    CLAIM_NEXT_JOBS_SQL
+}
+
 fn running_job_candidates_sql() -> String {
     format!("WITH candidate_jobs AS MATERIALIZED ({RUNNING_JOB_SQL}) {CLAIM_CANDIDATES_BODY_SQL}")
 }
@@ -123,8 +128,24 @@ pub(super) fn claim_next(
     transaction: &Transaction<'_>,
     now: UnixTimestamp,
 ) -> Result<Option<IngestJobId>> {
-    let candidates = claim_candidates(transaction, None)?;
-    let Some(candidate) = candidates.into_iter().find(candidate_is_current) else {
+    let mut candidate = None;
+    for _ in 0..CLAIM_BATCH_LIMIT {
+        let job_ids = claim_candidate_job_ids(transaction)?;
+        if job_ids.is_empty() {
+            break;
+        }
+        let candidates = claim_candidates(transaction, None)?;
+        if let Some(current) = candidates.into_iter().find(candidate_is_current) {
+            candidate = Some(current);
+            break;
+        }
+        let discarded =
+            super::discard_unclaimable_ocr_jobs_in_connection(transaction, &job_ids, now)?;
+        if discarded != job_ids.len() {
+            return Err(MetaStoreError::storage_invariant());
+        }
+    }
+    let Some(candidate) = candidate else {
         return Ok(None);
     };
     let changed = transaction
@@ -187,6 +208,24 @@ pub(super) fn claim_next(
         return Err(MetaStoreError::storage_invariant());
     }
     Ok(Some(candidate.job_id))
+}
+
+fn claim_candidate_job_ids(connection: &Connection) -> Result<Vec<IngestJobId>> {
+    let mut statement = connection
+        .prepare(claim_candidate_jobs_sql())
+        .map_err(MetaStoreError::storage)?;
+    let job_ids = statement
+        .query_map(
+            rusqlite::named_params! {":candidate_limit": CLAIM_CANDIDATE_LIMIT},
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(MetaStoreError::storage)?
+        .map(|row| {
+            IngestJobId::from_str(&row.map_err(MetaStoreError::storage)?)
+                .map_err(|_| MetaStoreError::invalid_value("ingest_job.id"))
+        })
+        .collect();
+    job_ids
 }
 
 pub(super) fn is_current(connection: &Connection, claimed: &ClaimedOcrJob) -> Result<bool> {

@@ -1520,7 +1520,7 @@ fn ocr_claim_progresses_when_one_document_has_many_present_occurrences() {
         "ocr-many-occurrences",
         now.as_unix_seconds(),
     );
-    let (document_id, revision) = enqueue_bound_ocr_source_in_root(
+    let (document_id, revision, _) = enqueue_bound_ocr_source_in_root(
         &store,
         &root_id,
         root_path,
@@ -1553,7 +1553,7 @@ fn stale_and_deleting_ocr_candidates_do_not_poison_a_valid_job() {
     let base = 1_800_001_500;
     let stale_root_path = "/synthetic/ocr-claim/stale";
     let stale_root = begin_ocr_claim_root(&store, stale_root_path, "ocr-stale", base);
-    let (stale_document_id, _) = enqueue_bound_ocr_source_in_root(
+    let (stale_document_id, _, _) = enqueue_bound_ocr_source_in_root(
         &store,
         &stale_root,
         stale_root_path,
@@ -1581,7 +1581,7 @@ fn stale_and_deleting_ocr_candidates_do_not_poison_a_valid_job() {
 
     let valid_root_path = "/synthetic/ocr-claim/valid";
     let valid_root = begin_ocr_claim_root(&store, valid_root_path, "ocr-valid", base + 3);
-    let (valid_document_id, _) = enqueue_bound_ocr_source_in_root(
+    let (valid_document_id, _, _) = enqueue_bound_ocr_source_in_root(
         &store,
         &valid_root,
         valid_root_path,
@@ -1595,6 +1595,159 @@ fn stale_and_deleting_ocr_candidates_do_not_poison_a_valid_job() {
         .unwrap()
         .unwrap();
     assert_eq!(claimed.job.document_id, valid_document_id);
+}
+
+#[test]
+fn full_invalid_claim_window_does_not_hide_the_next_healthy_job() {
+    let store = migrated_store();
+    let base = 1_800_002_000;
+    let deleting_root_path = "/synthetic/ocr-claim/full-window-deleting";
+    let deleting_root =
+        begin_ocr_claim_root(&store, deleting_root_path, "ocr-full-window-deleting", base);
+    let deleting_job_ids = (0..255)
+        .map(|index| {
+            enqueue_bound_ocr_source_in_root(
+                &store,
+                &deleting_root,
+                deleting_root_path,
+                "ocr-full-window-deleting",
+                &format!("deleting-head-{index:03}"),
+                UnixTimestamp::from_unix_seconds(base + index),
+            )
+            .2
+        })
+        .collect::<Vec<_>>();
+    store
+        .begin_source_root_deletion(&deleting_root, UnixTimestamp::from_unix_seconds(base + 255))
+        .unwrap();
+    let stale_root_path = "/synthetic/ocr-claim/full-window-stale";
+    let stale_root =
+        begin_ocr_claim_root(&store, stale_root_path, "ocr-full-window-stale", base + 255);
+    let (stale_document_id, _, stale_job_id) = enqueue_bound_ocr_source_in_root(
+        &store,
+        &stale_root,
+        stale_root_path,
+        "ocr-full-window-stale",
+        "stale-head-255",
+        UnixTimestamp::from_unix_seconds(base + 255),
+    );
+    let mut stale_document = store.document_by_id(&stale_document_id).unwrap().unwrap();
+    stale_document.normalized_path = "/synthetic/ocr-claim/stale-head-moved.pdf".to_string();
+    store.upsert_document(&stale_document).unwrap();
+
+    let valid_root_path = "/synthetic/ocr-claim/full-window-valid";
+    let valid_root =
+        begin_ocr_claim_root(&store, valid_root_path, "ocr-full-window-valid", base + 256);
+    let (valid_document_id, _, _) = enqueue_bound_ocr_source_in_root(
+        &store,
+        &valid_root,
+        valid_root_path,
+        "ocr-full-window-valid",
+        "healthy-after-invalid-window",
+        UnixTimestamp::from_unix_seconds(base + 256),
+    );
+
+    let claimed = store
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(base + 300))
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.job.document_id, valid_document_id);
+    for job_id in deleting_job_ids.iter().chain([&stale_job_id]) {
+        let job = store.ingest_job_by_id(job_id).unwrap().unwrap();
+        assert_eq!(job.status, IngestJobStatus::Completed);
+        assert_eq!(job.attempt_count, 0);
+        assert_eq!(
+            store.ocr_job_discard_reason(job_id).unwrap(),
+            Some(meta_store::OcrJobDiscardReason::SourceRevisionNoLongerCurrent)
+        );
+    }
+    assert!(store
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(base + 301))
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn unclaimable_ocr_settlement_is_idempotent_across_reopen() {
+    let data_dir = temp_data_dir("ocr-unclaimable-reopen");
+    let now = UnixTimestamp::from_unix_seconds(1_800_002_500);
+    let job_id = {
+        let store = open_owned_store(&data_dir);
+        let root_path = "/synthetic/ocr-claim/reopen-deleting";
+        let root = store
+            .register_source_root(root_path, root_path, "OCR reopen root", now)
+            .unwrap();
+        store
+            .begin_scan(&root.id, "ocr-reopen-deleting", ScanTrigger::Manual, now)
+            .unwrap();
+        let mut document = document("ocr-reopen-deleting", false, DocumentStatus::OcrRequired);
+        let revision = source_revision(&document.id);
+        document.normalized_path = format!("{root_path}/resume.pdf");
+        document.content_hash = Some(revision.content_hash.as_str().to_string());
+        store.upsert_document(&document).unwrap();
+        store.insert_source_revision(&revision).unwrap();
+        store
+            .observe_source_occurrence(
+                &root.id,
+                "resume.pdf",
+                &document.id,
+                &revision.id,
+                "ocr-reopen-deleting",
+                now,
+            )
+            .unwrap();
+        store
+            .insert_source_revision_triage(&SourceRevisionTriage {
+                source_revision_id: revision.id.clone(),
+                status: ClassificationStatus::OcrBacklog,
+                triage_epoch: CLASSIFIER_EPOCH.to_string(),
+                reason_codes: vec![ReasonCode::OcrRequired],
+                triaged_at: now,
+            })
+            .unwrap();
+        let job_id = store
+            .enqueue_ocr_job_for_source_triage(
+                &revision.id,
+                meta_store::CurrentClassifierEpoch::parse(CLASSIFIER_EPOCH).unwrap(),
+                now,
+            )
+            .unwrap()
+            .job
+            .id;
+        store
+            .begin_source_root_deletion(&root.id, UnixTimestamp::from_unix_seconds(1_800_002_501))
+            .unwrap();
+
+        assert!(store
+            .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_002_502))
+            .unwrap()
+            .is_none());
+        let settled = store.ingest_job_by_id(&job_id).unwrap().unwrap();
+        assert_eq!(settled.status, IngestJobStatus::Completed);
+        assert_eq!(settled.attempt_count, 0);
+        job_id
+    };
+
+    {
+        let reopened = open_owned_store(&data_dir);
+        let settled = reopened.ingest_job_by_id(&job_id).unwrap().unwrap();
+        assert_eq!(settled.status, IngestJobStatus::Completed);
+        assert_eq!(settled.attempt_count, 0);
+        assert_eq!(
+            reopened.ocr_job_discard_reason(&job_id).unwrap(),
+            Some(meta_store::OcrJobDiscardReason::SourceRevisionNoLongerCurrent)
+        );
+        assert!(reopened
+            .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_002_503))
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            reopened.ingest_job_by_id(&job_id).unwrap().unwrap(),
+            settled
+        );
+    }
+
+    remove_temp_dir(&data_dir);
 }
 
 #[test]
@@ -3514,7 +3667,7 @@ fn enqueue_bound_ocr_source_in_root(
     scan_id: &str,
     label: &str,
     now: UnixTimestamp,
-) -> (DocumentId, SourceRevision) {
+) -> (DocumentId, SourceRevision, IngestJobId) {
     let mut document = document(label, false, DocumentStatus::OcrRequired);
     let revision = source_revision(&document.id);
     let relative_path = format!("{label}.pdf");
@@ -3545,15 +3698,17 @@ fn enqueue_bound_ocr_source_in_root(
             triaged_at: now,
         })
         .unwrap();
-    store
+    let job_id = store
         .enqueue_ocr_job_for_source_triage(
             &revision.id,
             meta_store::CurrentClassifierEpoch::parse(CLASSIFIER_EPOCH).unwrap(),
             now,
         )
-        .unwrap();
+        .unwrap()
+        .job
+        .id;
 
-    (document.id, revision)
+    (document.id, revision, job_id)
 }
 
 fn insert_resume_version(store: &EphemeralMetaStore, version: &ResumeVersion) {
