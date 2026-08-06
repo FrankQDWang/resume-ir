@@ -649,7 +649,10 @@ fn validate_v39(connection: &Connection) -> Result<()> {
                 (SELECT COUNT(*) FROM sqlite_schema
                  WHERE type = 'table' AND name = 'ocr_claim_source_fence'),
                 (SELECT COUNT(*) FROM sqlite_schema
-                 WHERE type = 'index' AND name = 'ocr_claim_source_fence_revision_idx'),
+                 WHERE type = 'index' AND name IN (
+                   'ocr_claim_source_fence_revision_idx',
+                   'ingest_job_ocr_claim_queue_idx'
+                 )),
                 (SELECT COUNT(*) FROM ocr_claim_source_fence AS fence
                  LEFT JOIN ingest_job AS job ON job.id = fence.ingest_job_id
                  LEFT JOIN ocr_job_spec AS spec ON spec.ingest_job_id = job.id
@@ -679,7 +682,7 @@ fn validate_v39(connection: &Connection) -> Result<()> {
             },
         )
         .map_err(MetaStoreError::storage)?;
-    if table_count != 1 || index_count != 1 || invalid_rows != 0 {
+    if table_count != 1 || index_count != 2 || invalid_rows != 0 {
         return Err(MetaStoreError::storage_invariant());
     }
     crate::source_root_ocr_claim_fence::validate_stored_phases(connection)

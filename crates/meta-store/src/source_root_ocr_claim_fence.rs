@@ -10,8 +10,81 @@ use crate::{
     SourceRootDeletionPhase, SourceRootId, UnixTimestamp,
 };
 
-const CLAIM_CANDIDATE_LIMIT: i64 = 257;
-const MAX_CLAIM_CANDIDATES: usize = 256;
+const CLAIM_CANDIDATE_LIMIT: i64 = 256;
+
+const CLAIM_NEXT_JOBS_SQL: &str =
+    "SELECT job.id, job.document_id, job.queued_at_seconds, job.rowid AS job_rowid
+     FROM ingest_job AS job INDEXED BY ingest_job_ocr_claim_queue_idx
+     WHERE job.kind = 'ocr_document'
+       AND (
+         job.status = 'queued'
+         OR (
+           job.status IN ('interrupted', 'failed_retryable')
+           AND job.attempt_count < job.max_attempts
+         )
+       )
+     ORDER BY job.queued_at_seconds, job.rowid
+     LIMIT :candidate_limit";
+
+const RUNNING_JOB_SQL: &str =
+    "SELECT job.id, job.document_id, job.queued_at_seconds, job.rowid AS job_rowid
+     FROM ingest_job AS job
+     WHERE job.id = :running_job AND job.kind = 'ocr_document' AND job.status = 'running'
+     LIMIT 1";
+
+const CLAIM_CANDIDATES_BODY_SQL: &str =
+    "SELECT candidate_job.id, candidate_job.document_id, spec.source_revision_id,
+            spec.triage_epoch, occurrence.root_id, occurrence.relative_path,
+            root.revocation_epoch, root.canonical_path, document.normalized_path,
+            deletion.phase
+     FROM candidate_jobs AS candidate_job
+     JOIN ocr_job_spec AS spec ON spec.ingest_job_id = candidate_job.id
+     JOIN source_revision_triage AS triage
+       ON triage.source_revision_id = spec.source_revision_id
+      AND triage.triage_epoch = spec.triage_epoch
+     JOIN source_revision AS revision ON revision.id = spec.source_revision_id
+     JOIN document
+       ON document.id = candidate_job.document_id
+      AND document.id = revision.document_id
+      AND document.content_hash = revision.content_hash
+     JOIN source_occurrence AS occurrence ON occurrence.rowid = (
+       SELECT ranked_occurrence.rowid
+       FROM (
+         SELECT candidate_occurrence.rowid,
+                CASE WHEN document.normalized_path = CASE
+                  WHEN candidate_root.canonical_path = '/'
+                    THEN '/' || candidate_occurrence.relative_path
+                  ELSE candidate_root.canonical_path || '/' || candidate_occurrence.relative_path
+                END THEN 0 ELSE 1 END AS path_mismatch,
+                candidate_root.id AS root_id,
+                candidate_occurrence.relative_path
+         FROM source_occurrence AS candidate_occurrence
+         JOIN source_root AS candidate_root ON candidate_root.id = candidate_occurrence.root_id
+         WHERE candidate_occurrence.document_id = document.id
+           AND candidate_occurrence.source_revision_id = revision.id
+           AND candidate_occurrence.state = 'present'
+           AND typeof(candidate_root.revocation_epoch) = 'integer'
+           AND candidate_root.revocation_epoch BETWEEN 0 AND :max_root_epoch
+       ) AS ranked_occurrence
+       ORDER BY ranked_occurrence.path_mismatch, ranked_occurrence.root_id,
+                ranked_occurrence.relative_path
+       LIMIT 1
+     )
+     JOIN source_root AS root ON root.id = occurrence.root_id
+     LEFT JOIN source_root_deletion AS deletion ON deletion.root_id = root.id
+     WHERE document.is_deleted = 0 AND document.status = :document_status
+       AND triage.status = :triage_status
+     ORDER BY candidate_job.queued_at_seconds, candidate_job.job_rowid";
+
+pub(super) fn claim_next_candidates_sql() -> String {
+    format!(
+        "WITH candidate_jobs AS MATERIALIZED ({CLAIM_NEXT_JOBS_SQL}) {CLAIM_CANDIDATES_BODY_SQL}"
+    )
+}
+
+fn running_job_candidates_sql() -> String {
+    format!("WITH candidate_jobs AS MATERIALIZED ({RUNNING_JOB_SQL}) {CLAIM_CANDIDATES_BODY_SQL}")
+}
 
 pub(super) fn validate_stored_phases(connection: &Connection) -> Result<()> {
     let mut statement = connection
@@ -51,9 +124,6 @@ pub(super) fn claim_next(
     now: UnixTimestamp,
 ) -> Result<Option<IngestJobId>> {
     let candidates = claim_candidates(transaction, None)?;
-    if candidates.len() > MAX_CLAIM_CANDIDATES {
-        return Err(MetaStoreError::storage_invariant());
-    }
     let Some(candidate) = candidates.into_iter().find(candidate_is_current) else {
         return Ok(None);
     };
@@ -183,59 +253,43 @@ fn claim_candidates(
     connection: &Connection,
     running_job: Option<&IngestJobId>,
 ) -> Result<Vec<ClaimCandidate>> {
-    let mut statement = connection
-        .prepare(
-            "SELECT job.id, job.document_id, spec.source_revision_id, spec.triage_epoch,
-                    occurrence.root_id, occurrence.relative_path, root.revocation_epoch,
-                    root.canonical_path, document.normalized_path, deletion.phase
-             FROM ingest_job AS job
-             JOIN ocr_job_spec AS spec ON spec.ingest_job_id = job.id
-             JOIN source_revision_triage AS triage
-               ON triage.source_revision_id = spec.source_revision_id
-              AND triage.triage_epoch = spec.triage_epoch
-             JOIN source_revision AS revision ON revision.id = spec.source_revision_id
-             JOIN document
-               ON document.id = job.document_id
-              AND document.id = revision.document_id
-              AND document.content_hash = revision.content_hash
-             JOIN source_occurrence AS occurrence
-               ON occurrence.document_id = document.id
-              AND occurrence.source_revision_id = revision.id
-              AND occurrence.state = 'present'
-             JOIN source_root AS root ON root.id = occurrence.root_id
-             LEFT JOIN source_root_deletion AS deletion ON deletion.root_id = root.id
-             WHERE job.kind = ?1 AND (
-               (?8 IS NULL AND (
-                  job.status = ?2 OR (job.status IN (?3, ?4) AND job.attempt_count < job.max_attempts)
-               )) OR (?8 IS NOT NULL AND job.id = ?8 AND job.status = ?9)
-             )
-               AND document.is_deleted = 0 AND document.status = ?5
-               AND triage.status = ?6
-               AND typeof(root.revocation_epoch) = 'integer'
-               AND root.revocation_epoch BETWEEN 0 AND ?7
-             ORDER BY job.queued_at_seconds, job.rowid, root.id, occurrence.relative_path
-             LIMIT ?10",
-        )
-        .map_err(MetaStoreError::storage)?;
-    let rows = statement
-        .query_map(
-            params![
-                ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
-                ingest_job_status_to_storage(IngestJobStatus::Queued),
-                ingest_job_status_to_storage(IngestJobStatus::Interrupted),
-                ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
-                document_status_to_storage(DocumentStatus::OcrRequired),
-                crate::ClassificationStatus::OcrBacklog.as_str(),
-                schema_v38::MAX_ROOT_REVOCATION_EPOCH,
-                running_job.map(IngestJobId::as_str),
-                ingest_job_status_to_storage(IngestJobStatus::Running),
-                CLAIM_CANDIDATE_LIMIT,
-            ],
-            read_candidate,
-        )
-        .map_err(MetaStoreError::storage)?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(MetaStoreError::storage)?;
+    let sql = if running_job.is_some() {
+        running_job_candidates_sql()
+    } else {
+        claim_next_candidates_sql()
+    };
+    let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+    let document_status = document_status_to_storage(DocumentStatus::OcrRequired);
+    let triage_status = crate::ClassificationStatus::OcrBacklog.as_str();
+    let max_root_epoch = schema_v38::MAX_ROOT_REVOCATION_EPOCH;
+    let rows = match running_job {
+        Some(running_job) => statement
+            .query_map(
+                rusqlite::named_params! {
+                    ":running_job": running_job.as_str(),
+                    ":document_status": document_status,
+                    ":triage_status": triage_status,
+                    ":max_root_epoch": max_root_epoch,
+                },
+                read_candidate,
+            )
+            .map_err(MetaStoreError::storage)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(MetaStoreError::storage)?,
+        None => statement
+            .query_map(
+                rusqlite::named_params! {
+                    ":candidate_limit": CLAIM_CANDIDATE_LIMIT,
+                    ":document_status": document_status,
+                    ":triage_status": triage_status,
+                    ":max_root_epoch": max_root_epoch,
+                },
+                read_candidate,
+            )
+            .map_err(MetaStoreError::storage)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(MetaStoreError::storage)?,
+    };
     rows.into_iter().map(parse_candidate).collect()
 }
 
@@ -244,9 +298,6 @@ fn replacement_candidate(
     claimed: &ClaimedOcrJob,
 ) -> Result<Option<ClaimCandidate>> {
     let candidates = claim_candidates(connection, Some(&claimed.job.id))?;
-    if candidates.len() > MAX_CLAIM_CANDIDATES {
-        return Err(MetaStoreError::storage_invariant());
-    }
     Ok(candidates
         .into_iter()
         .find(|candidate| candidate.job_id == claimed.job.id && candidate_is_current(candidate)))

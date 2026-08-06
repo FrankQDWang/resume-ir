@@ -1477,6 +1477,127 @@ fn superseded_shared_document_claim_rebinds_without_consuming_failure_budget() {
 }
 
 #[test]
+fn ocr_claim_progresses_with_more_than_candidate_window_jobs() {
+    let store = migrated_store();
+    let base = 1_800_000_820;
+    let root_path = "/synthetic/ocr-claim/window";
+    let root_id = begin_ocr_claim_root(&store, root_path, "ocr-claim-window", base);
+    let document_ids = (0..257)
+        .map(|index| {
+            enqueue_bound_ocr_source_in_root(
+                &store,
+                &root_id,
+                root_path,
+                "ocr-claim-window",
+                &format!("ocr-claim-window-{index:03}"),
+                UnixTimestamp::from_unix_seconds(base + index),
+            )
+            .0
+        })
+        .collect::<Vec<_>>();
+
+    let first = store
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(base + 300))
+        .unwrap()
+        .unwrap();
+    let second = store
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(base + 301))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(first.job.document_id, document_ids[0]);
+    assert_eq!(second.job.document_id, document_ids[1]);
+}
+
+#[test]
+fn ocr_claim_progresses_when_one_document_has_many_present_occurrences() {
+    let store = migrated_store();
+    let now = UnixTimestamp::from_unix_seconds(1_800_001_200);
+    let root_path = "/synthetic/ocr-many-occurrences";
+    let root_id = begin_ocr_claim_root(
+        &store,
+        root_path,
+        "ocr-many-occurrences",
+        now.as_unix_seconds(),
+    );
+    let (document_id, revision) = enqueue_bound_ocr_source_in_root(
+        &store,
+        &root_id,
+        root_path,
+        "ocr-many-occurrences",
+        "canonical",
+        now,
+    );
+
+    for index in 0..257 {
+        let relative_path = format!("shared-{index:03}.pdf");
+        store
+            .observe_source_occurrence(
+                &root_id,
+                &relative_path,
+                &document_id,
+                &revision.id,
+                "ocr-many-occurrences",
+                now,
+            )
+            .unwrap();
+    }
+
+    let claimed = store.claim_next_ocr_job(now).unwrap().unwrap();
+    assert_eq!(claimed.job.document_id, document_id);
+}
+
+#[test]
+fn stale_and_deleting_ocr_candidates_do_not_poison_a_valid_job() {
+    let store = migrated_store();
+    let base = 1_800_001_500;
+    let stale_root_path = "/synthetic/ocr-claim/stale";
+    let stale_root = begin_ocr_claim_root(&store, stale_root_path, "ocr-stale", base);
+    let (stale_document_id, _) = enqueue_bound_ocr_source_in_root(
+        &store,
+        &stale_root,
+        stale_root_path,
+        "ocr-stale",
+        "stale",
+        UnixTimestamp::from_unix_seconds(base),
+    );
+    let mut stale_document = store.document_by_id(&stale_document_id).unwrap().unwrap();
+    stale_document.normalized_path = "/synthetic/ocr-claim/no-longer-present.pdf".to_string();
+    store.upsert_document(&stale_document).unwrap();
+
+    let deleting_root_path = "/synthetic/ocr-claim/deleting";
+    let deleting_root = begin_ocr_claim_root(&store, deleting_root_path, "ocr-deleting", base + 1);
+    enqueue_bound_ocr_source_in_root(
+        &store,
+        &deleting_root,
+        deleting_root_path,
+        "ocr-deleting",
+        "deleting",
+        UnixTimestamp::from_unix_seconds(base + 1),
+    );
+    store
+        .begin_source_root_deletion(&deleting_root, UnixTimestamp::from_unix_seconds(base + 2))
+        .unwrap();
+
+    let valid_root_path = "/synthetic/ocr-claim/valid";
+    let valid_root = begin_ocr_claim_root(&store, valid_root_path, "ocr-valid", base + 3);
+    let (valid_document_id, _) = enqueue_bound_ocr_source_in_root(
+        &store,
+        &valid_root,
+        valid_root_path,
+        "ocr-valid",
+        "valid",
+        UnixTimestamp::from_unix_seconds(base + 3),
+    );
+
+    let claimed = store
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(base + 4))
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.job.document_id, valid_document_id);
+}
+
+#[test]
 fn entity_mentions_insert_query_and_redact_values() {
     let (_directory, store) = support::owned_store();
     let document = document("field-mention-document", false, DocumentStatus::Searchable);
@@ -3368,6 +3489,71 @@ fn seed_active_ocr_cache_source(
     let claimed = store.claim_next_ocr_job(now).unwrap().unwrap();
 
     (revision.content_hash, claimed, root.id)
+}
+
+fn begin_ocr_claim_root(
+    store: &EphemeralMetaStore,
+    root_path: &str,
+    scan_id: &str,
+    now_seconds: i64,
+) -> SourceRootId {
+    let now = UnixTimestamp::from_unix_seconds(now_seconds);
+    let root = store
+        .register_source_root(root_path, root_path, "OCR claim root", now)
+        .unwrap();
+    store
+        .begin_scan(&root.id, scan_id, ScanTrigger::Manual, now)
+        .unwrap();
+    root.id
+}
+
+fn enqueue_bound_ocr_source_in_root(
+    store: &EphemeralMetaStore,
+    root_id: &SourceRootId,
+    root_path: &str,
+    scan_id: &str,
+    label: &str,
+    now: UnixTimestamp,
+) -> (DocumentId, SourceRevision) {
+    let mut document = document(label, false, DocumentStatus::OcrRequired);
+    let revision = source_revision(&document.id);
+    let relative_path = format!("{label}.pdf");
+    document.normalized_path = format!("{root_path}/{relative_path}");
+    document.content_hash = Some(revision.content_hash.as_str().to_string());
+
+    store.upsert_document(&document).unwrap();
+    assert_eq!(
+        store.insert_source_revision(&revision).unwrap(),
+        IdentityInsertOutcome::Inserted
+    );
+    store
+        .observe_source_occurrence(
+            root_id,
+            &relative_path,
+            &document.id,
+            &revision.id,
+            scan_id,
+            now,
+        )
+        .unwrap();
+    store
+        .insert_source_revision_triage(&SourceRevisionTriage {
+            source_revision_id: revision.id.clone(),
+            status: ClassificationStatus::OcrBacklog,
+            triage_epoch: CLASSIFIER_EPOCH.to_string(),
+            reason_codes: vec![ReasonCode::OcrRequired],
+            triaged_at: now,
+        })
+        .unwrap();
+    store
+        .enqueue_ocr_job_for_source_triage(
+            &revision.id,
+            meta_store::CurrentClassifierEpoch::parse(CLASSIFIER_EPOCH).unwrap(),
+            now,
+        )
+        .unwrap();
+
+    (document.id, revision)
 }
 
 fn insert_resume_version(store: &EphemeralMetaStore, version: &ResumeVersion) {
