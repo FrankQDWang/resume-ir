@@ -5,12 +5,12 @@
   "claim": "no_claim",
   "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "de388fe83cd390f32b37a0e96ed2c05d889d5e6af8377fe340d7e7b950640c15",
+    "active_goal_sha256": "26c3cc445d08d71b6d94b53c39548d853cdca2709a42e29e8ebfd9e789646e01",
     "acceptance_matrix_sha256": "dc00a615d21f4f932931c50923e45a61024a80c462ac3b7b1aed919f1af3570b",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "0879adf3cf15ad54ad0a582e1bbafab374638c1c"
+    "git_head_sha": "ff460194e98829088958d9dbebf7acaa30102112"
   },
   "synthetic_smoke": {
     "smoke_schema_version": "resume-ir.synthetic-smoke-baseline.v1",

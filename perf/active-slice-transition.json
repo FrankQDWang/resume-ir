@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-440-to-443-legacy-quiescing-reconciliation-2026-08-05",
-  "from_issue": "#440",
-  "to_issue": "#443",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/440#issuecomment-5193376647",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/443",
-  "base_active_goal_sha256": "b53f2f2dda8d579b4e1f3e243261f25f22612170b179f034348cc19a4f7cd211",
+  "transition_id": "issue-443-to-446-source-root-revocation-epoch-foundation-2026-08-06",
+  "from_issue": "#443",
+  "to_issue": "#446",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/443#issuecomment-5199454461",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/446",
+  "base_active_goal_sha256": "de388fe83cd390f32b37a0e96ed2c05d889d5e6af8377fe340d7e7b950640c15",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
