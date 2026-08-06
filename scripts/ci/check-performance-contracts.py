@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import hashlib
 import pathlib
+import re
 import runpy
 import subprocess
 import sys
@@ -157,7 +158,7 @@ FORWARD_MIGRATION_FEATURE_TRAIN_IDENTITY = {
     "train_final_schema": 35,
     "intermediate_schema_versions": [34],
     "current_product_version": "0.1.9",
-    "current_metadata_schema": 37,
+    "current_metadata_schema": 38,
     "pre_v29_runtime_migration_allowed": False,
     "future_schema_read_allowed": False,
     "migration_dual_reader_allowed": False,
@@ -765,15 +766,31 @@ def validate_forward_migration_feature_train(matrix: Mapping[str, object]) -> No
 
 def validate_current_metadata_schema_source() -> None:
     schema_source = (
-        ROOT / "crates" / "meta-store" / "src" / "schema_v37.rs"
+        ROOT / "crates" / "meta-store" / "src" / "schema_v38.rs"
     ).read_text(encoding="utf-8")
-    if "pub(super) const VERSION: u32 = 37;" not in schema_source:
-        fail("crates/meta-store/src/schema_v37.rs: expected schema version 37")
+    if "pub(super) const VERSION: u32 = 38;" not in schema_source:
+        fail("crates/meta-store/src/schema_v38.rs: expected schema version 38")
     lib_source = (
         ROOT / "crates" / "meta-store" / "src" / "lib.rs"
     ).read_text(encoding="utf-8")
-    if "pub const CURRENT_SCHEMA_VERSION: u32 = schema_v37::VERSION;" not in lib_source:
-        fail("crates/meta-store/src/lib.rs: CURRENT_SCHEMA_VERSION must use schema_v37")
+    if "pub const CURRENT_SCHEMA_VERSION: u32 = schema_v38::VERSION;" not in lib_source:
+        fail("crates/meta-store/src/lib.rs: CURRENT_SCHEMA_VERSION must use schema_v38")
+    if "DEFAULT 0" not in schema_source or "typeof(revocation_epoch) = 'integer'" not in schema_source:
+        fail("schema v38 must keep a fail-closed integer legacy epoch default")
+
+    source_dir = ROOT / "crates" / "meta-store" / "src"
+    production_sources = [
+        path for path in source_dir.glob("*.rs") if not path.name.endswith("_tests.rs")
+    ]
+    scan_writers = []
+    for path in production_sources:
+        source = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"INSERT INTO scan_snapshot\s*\((.*?)\)\s*VALUES", source, re.S):
+            scan_writers.append((path.name, match.group(1)))
+    if len(scan_writers) != 2 or {path for path, _ in scan_writers} != {"source_roots.rs"}:
+        fail(f"scan_snapshot must have exactly two production INSERT owners, got {scan_writers!r}")
+    if any("root_revocation_epoch" not in columns for _, columns in scan_writers):
+        fail("every production scan_snapshot INSERT must explicitly capture root_revocation_epoch")
 
 
 def validate_exact_contract_section(
@@ -1046,7 +1063,7 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         "owner_kind": "attribution_evidence",
         "primary_benchmark_lane": "full_import_ocr_backlog",
         "current_schema_source": "crates/meta-store/src/lib.rs::CURRENT_SCHEMA_VERSION",
-        "current_metadata_schema": 37,
+        "current_metadata_schema": 38,
         "milestones": ["first_searchable", "keyword_ready", "embedding_complete",
                        "ocr_backlog_full_import"],
         "milestone_claim_mixing_allowed": False,

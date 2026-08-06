@@ -12,16 +12,16 @@ use crate::{
     active_store_manifest::{read_manifest, read_manifest_format_version},
     ContentDigest, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId,
     DocumentStatus, FileExtension, FullTextSnapshotDescriptor, ImportProcessingContract,
-    MetaStoreErrorClass, OwnedMetaStore, SearchProjectionDigest, SearchPublicationCommit,
-    SearchPublicationDraft, SearchPublicationOutcome, SearchPublicationValidation, UnixTimestamp,
-    VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
+    MetaStoreErrorClass, OwnedMetaStore, ScanTrigger, SearchProjectionDigest,
+    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationOutcome,
+    SearchPublicationValidation, UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
 };
 
 #[test]
-fn authority_free_directory_initializes_exact_v37_and_reopens_without_writes() {
+fn authority_free_directory_initializes_exact_v38_and_reopens_without_writes() {
     let fixture = OwnedDirectory::new();
     let store = fixture.owner.open_store().unwrap();
-    assert_eq!(store.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(store.schema_version().unwrap(), schema_v38::VERSION);
     assert_eq!(
         store
             .connection
@@ -32,16 +32,19 @@ fn authority_free_directory_initializes_exact_v37_and_reopens_without_writes() {
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),
-        8
+        9
     );
     let now = UnixTimestamp::from_unix_seconds(1_800_500_600);
     let root = store
         .register_source_root(
-            "/synthetic/v37-reopen",
-            "/synthetic/v37-reopen",
-            "Synthetic v37 reopen",
+            "/synthetic/v38-reopen",
+            "/synthetic/v38-reopen",
+            "Synthetic v38 reopen",
             now,
         )
+        .unwrap();
+    store
+        .begin_scan(&root.id, "v38-reopen-scan", ScanTrigger::Manual, now)
         .unwrap();
     store.begin_source_root_deletion(&root.id, now).unwrap();
     drop(store);
@@ -59,6 +62,22 @@ fn authority_free_directory_initializes_exact_v37_and_reopens_without_writes() {
             )
             .unwrap(),
         schema_v37::SNAPSHOT_INVARIANT_V2
+    );
+    assert_eq!(
+        reopened
+            .connection
+            .borrow()
+            .query_row(
+                "SELECT source_root.revocation_epoch,
+                        scan_snapshot.root_revocation_epoch
+                 FROM source_root
+                 JOIN scan_snapshot ON scan_snapshot.root_id = source_root.id
+                 WHERE source_root.id = ?1",
+                [root.id.as_str()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap(),
+        (1, 0)
     );
     drop(reopened);
 
@@ -183,7 +202,7 @@ fn exact_v29_migrates_through_cow_without_mutating_predecessor() {
     let source_ciphertext = sha256_file(&source_path);
 
     let migrated = fixture.owner.open_store().unwrap();
-    assert_eq!(migrated.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(migrated.schema_version().unwrap(), schema_v38::VERSION);
     assert_eq!(
         migrated.document_by_id(&document.id).unwrap(),
         Some(document)
@@ -194,7 +213,7 @@ fn exact_v29_migrates_through_cow_without_mutating_predecessor() {
         "pre-v35 stores must migrate without inventing fast-path observations"
     );
     let target_manifest = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
-    assert_eq!(target_manifest.schema_version, schema_v37::VERSION);
+    assert_eq!(target_manifest.schema_version, schema_v38::VERSION);
     assert_eq!(
         target_manifest.store_id_digest,
         source_manifest.store_id_digest
@@ -221,7 +240,7 @@ fn future_manifest_fails_closed_without_mutating_authority() {
     fs::write(
         &manifest_path,
         format!(
-            "resume-ir.metadata-active.v2\nfile=metadata-v38-{}.sqlite3\nschema=38\ndigest={}\n",
+            "resume-ir.metadata-active.v2\nfile=metadata-v39-{}.sqlite3\nschema=39\ndigest={}\n",
             &current.store_id_digest[..16],
             current.store_id_digest,
         ),
@@ -254,7 +273,7 @@ fn preparing_receipt_discards_only_recorded_unpublished_files_then_retries() {
 
     let migrated = fixture.owner.open_store().unwrap();
 
-    assert_eq!(migrated.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(migrated.schema_version().unwrap(), schema_v38::VERSION);
     assert!(!fixture.data_dir().join(interrupted.staging_file).exists());
     assert!(!fixture
         .data_dir()
@@ -292,7 +311,7 @@ fn ready_receipt_atomically_publishes_the_prevalidated_target() {
 
     let recovered = fixture.owner.open_store().unwrap();
 
-    assert_eq!(recovered.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(recovered.schema_version().unwrap(), schema_v38::VERSION);
     assert_eq!(
         recovered.document_by_id(&document.id).unwrap(),
         Some(document)
@@ -310,7 +329,7 @@ fn ready_receipt_atomically_publishes_the_prevalidated_target() {
 }
 
 #[test]
-fn published_v35_receipt_is_retired_before_upgrading_to_v37() {
+fn published_v35_receipt_is_retired_before_upgrading_to_v38() {
     let fixture = OwnedDirectory::new();
     let source_store = fixture.open_historical_v29();
     let document = synthetic_document();
@@ -329,7 +348,7 @@ fn published_v35_receipt_is_retired_before_upgrading_to_v37() {
 
     let recovered = fixture.owner.open_store().unwrap();
 
-    assert_eq!(recovered.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(recovered.schema_version().unwrap(), schema_v38::VERSION);
     assert_eq!(
         recovered.document_by_id(&document.id).unwrap(),
         Some(document)
@@ -338,7 +357,7 @@ fn published_v35_receipt_is_retired_before_upgrading_to_v37() {
     let current_receipt = receipt::read(&receipt::path(fixture.data_dir())).unwrap();
     assert_eq!(current_receipt.phase, ReceiptPhase::Published);
     assert_eq!(current_receipt.source, receipt.target);
-    assert_eq!(current_receipt.target.schema_version, schema_v37::VERSION);
+    assert_eq!(current_receipt.target.schema_version, schema_v38::VERSION);
 }
 
 #[test]
@@ -359,7 +378,7 @@ fn preparing_v35_receipt_cleans_exact_old_files_then_upgrades() {
 
     let recovered = fixture.owner.open_store().unwrap();
 
-    assert_eq!(recovered.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(recovered.schema_version().unwrap(), schema_v38::VERSION);
     assert!(!fixture.data_dir().join(interrupted.staging_file).exists());
     assert!(!fixture
         .data_dir()
@@ -367,7 +386,7 @@ fn preparing_v35_receipt_cleans_exact_old_files_then_upgrades() {
         .exists());
     let current_receipt = receipt::read(&receipt::path(fixture.data_dir())).unwrap();
     assert_eq!(current_receipt.phase, ReceiptPhase::Published);
-    assert_eq!(current_receipt.target.schema_version, schema_v37::VERSION);
+    assert_eq!(current_receipt.target.schema_version, schema_v38::VERSION);
 }
 
 #[test]
@@ -389,7 +408,7 @@ fn ready_v35_receipt_publishes_then_upgrades_without_orphans() {
 
     let recovered = fixture.owner.open_store().unwrap();
 
-    assert_eq!(recovered.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(recovered.schema_version().unwrap(), schema_v38::VERSION);
     assert_eq!(
         recovered.document_by_id(&document.id).unwrap(),
         Some(document)
@@ -416,7 +435,7 @@ fn preparing_v35_initialization_receipt_cleans_exact_old_files() {
 
     let recovered = fixture.owner.open_store().unwrap();
 
-    assert_eq!(recovered.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(recovered.schema_version().unwrap(), schema_v38::VERSION);
     assert!(!fixture.data_dir().join(old_staging).exists());
     assert!(!fixture.data_dir().join(old_target).exists());
     assert!(!initialization_receipt::path(fixture.data_dir()).exists());
@@ -450,7 +469,7 @@ fn ready_v35_initialization_receipt_publishes_then_upgrades() {
 
     let recovered = fixture.owner.open_store().unwrap();
 
-    assert_eq!(recovered.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(recovered.schema_version().unwrap(), schema_v38::VERSION);
     assert_eq!(
         recovered.document_by_id(&document.id).unwrap(),
         Some(document)
@@ -467,7 +486,7 @@ fn ready_v35_initialization_receipt_publishes_then_upgrades() {
 }
 
 #[test]
-fn published_v35_initialization_ready_receipt_continues_to_v37() {
+fn published_v35_initialization_ready_receipt_continues_to_v38() {
     let fixture = OwnedDirectory::new();
     let source_store = fixture.open_historical_v29();
     let document = synthetic_document();
@@ -494,7 +513,7 @@ fn published_v35_initialization_ready_receipt_continues_to_v37() {
 
     let recovered = fixture.owner.open_store().unwrap();
 
-    assert_eq!(recovered.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(recovered.schema_version().unwrap(), schema_v38::VERSION);
     assert_eq!(
         recovered.document_by_id(&document.id).unwrap(),
         Some(document)
@@ -507,7 +526,7 @@ fn published_v35_initialization_ready_receipt_continues_to_v37() {
 }
 
 #[test]
-fn v36_forward_receipt_phases_converge_before_upgrading_to_v37() {
+fn v36_forward_receipt_phases_converge_before_upgrading_to_v38() {
     for (phase, migration_id) in [
         (ReceiptPhase::Preparing, "3".repeat(64)),
         (ReceiptPhase::Ready, "4".repeat(64)),
@@ -519,7 +538,8 @@ fn v36_forward_receipt_phases_converge_before_upgrading_to_v37() {
         source_store.upsert_document(&document).unwrap();
         drop(source_store);
         let source = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
-        let interrupted = v36_migration_receipt(&source, migration_id, phase);
+        let interrupted =
+            historical_migration_receipt(&source, migration_id, phase, schema_v36::VERSION);
         match phase {
             ReceiptPhase::Preparing => {
                 for file_name in [
@@ -550,7 +570,7 @@ fn v36_forward_receipt_phases_converge_before_upgrading_to_v37() {
 
         let recovered = fixture.owner.open_store().unwrap();
 
-        assert_eq!(recovered.schema_version().unwrap(), schema_v37::VERSION);
+        assert_eq!(recovered.schema_version().unwrap(), schema_v38::VERSION);
         assert_eq!(
             recovered.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -558,7 +578,7 @@ fn v36_forward_receipt_phases_converge_before_upgrading_to_v37() {
         assert!(!fixture.data_dir().join(interrupted.staging_file).exists());
         let current_receipt = receipt::read(&receipt::path(fixture.data_dir())).unwrap();
         assert_eq!(current_receipt.phase, ReceiptPhase::Published);
-        assert_eq!(current_receipt.target.schema_version, schema_v37::VERSION);
+        assert_eq!(current_receipt.target.schema_version, schema_v38::VERSION);
         if phase != ReceiptPhase::Preparing {
             assert_eq!(current_receipt.source, interrupted.target);
         }
@@ -580,7 +600,7 @@ fn preparing_v36_initialization_receipt_cleans_exact_old_files() {
 
     let recovered = fixture.owner.open_store().unwrap();
 
-    assert_eq!(recovered.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(recovered.schema_version().unwrap(), schema_v38::VERSION);
     assert!(!fixture.data_dir().join(old_staging).exists());
     assert!(!fixture.data_dir().join(old_target).exists());
     assert!(!initialization_receipt::path(fixture.data_dir()).exists());
@@ -614,7 +634,7 @@ fn ready_v36_initialization_receipt_publishes_then_upgrades() {
 
     let recovered = fixture.owner.open_store().unwrap();
 
-    assert_eq!(recovered.schema_version().unwrap(), schema_v37::VERSION);
+    assert_eq!(recovered.schema_version().unwrap(), schema_v38::VERSION);
     assert_eq!(
         recovered.document_by_id(&document.id).unwrap(),
         Some(document)
@@ -624,6 +644,92 @@ fn ready_v36_initialization_receipt_publishes_then_upgrades() {
     let current_receipt = receipt::read(&receipt::path(fixture.data_dir())).unwrap();
     assert_eq!(current_receipt.phase, ReceiptPhase::Published);
     assert_eq!(current_receipt.source, old_target);
+}
+
+#[test]
+fn exact_v37_recovery_receipts_converge_before_v38_upgrade() {
+    for (phase, digit) in [
+        (ReceiptPhase::Preparing, "a"),
+        (ReceiptPhase::Ready, "b"),
+        (ReceiptPhase::Published, "c"),
+    ] {
+        let fixture = OwnedDirectory::new();
+        drop(fixture.open_historical_v29());
+        let source = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
+        let interrupted =
+            historical_migration_receipt(&source, digit.repeat(64), phase, schema_v37::VERSION);
+        if phase == ReceiptPhase::Preparing {
+            for file in [&interrupted.staging_file, &interrupted.target.file_name] {
+                fs::write(fixture.data_dir().join(file), b"v37 unpublished").unwrap();
+                crate::restrict_private_file_permissions(&fixture.data_dir().join(file)).unwrap();
+            }
+        } else {
+            build_historical_target(
+                fixture.data_dir(),
+                &source,
+                &interrupted.staging_file,
+                &interrupted.target,
+            );
+            if phase == ReceiptPhase::Published {
+                replace_active_store(fixture.data_dir(), &source, &interrupted.target, || Ok(()))
+                    .unwrap();
+            }
+        }
+        persist_exact_forward_receipt(fixture.data_dir(), &interrupted);
+        assert_opens_current_v38(&fixture);
+    }
+
+    for (phase, digit) in [("preparing", "d"), ("ready", "e")] {
+        let fixture = OwnedDirectory::new();
+        let initialization_id = digit.repeat(64);
+        let staging = format!(".metadata-v37-init-{}.sqlite3", &initialization_id[..16]);
+        let target_file = format!("metadata-v37-{}.sqlite3", &initialization_id[..16]);
+        if phase == "preparing" {
+            for file in [&staging, &target_file] {
+                fs::write(fixture.data_dir().join(file), b"v37 initialization").unwrap();
+                crate::restrict_private_file_permissions(&fixture.data_dir().join(file)).unwrap();
+            }
+        } else {
+            drop(fixture.open_historical_v29());
+            let source = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
+            let target = ActiveStoreManifest {
+                file_name: target_file,
+                schema_version: schema_v37::VERSION,
+                store_id_digest: source.store_id_digest.clone(),
+            };
+            build_historical_target(fixture.data_dir(), &source, &staging, &target);
+            fs::remove_file(fixture.data_dir().join(&source.file_name)).unwrap();
+            fs::remove_file(fixture.data_dir().join(MANIFEST_FILE)).unwrap();
+            sync_parent_directory(fixture.data_dir()).unwrap();
+            persist_exact_initialization_receipt(
+                fixture.data_dir(),
+                phase,
+                &initialization_id,
+                Some(target.store_id_digest.as_str()),
+            );
+        }
+        if phase == "preparing" {
+            persist_exact_initialization_receipt(
+                fixture.data_dir(),
+                phase,
+                &initialization_id,
+                None,
+            );
+        }
+        assert_opens_current_v38(&fixture);
+    }
+}
+
+fn assert_opens_current_v38(fixture: &OwnedDirectory) {
+    assert_eq!(
+        fixture
+            .owner
+            .open_store()
+            .unwrap()
+            .schema_version()
+            .unwrap(),
+        schema_v38::VERSION
+    );
 }
 
 #[test]
@@ -702,7 +808,7 @@ fn logical_preservation_digest_scans_storage_order_without_temp_sorting() {
             .unwrap();
     }
     let tables = vec!["keyed_records".to_string(), "rowid_records".to_string()];
-    let source_digest = logical_data_digest(&source, &tables, schema_v37::VERSION).unwrap();
+    let source_digest = logical_data_digest(&source, &tables, schema_v38::VERSION).unwrap();
 
     let destination_path = tempfile::NamedTempFile::new().unwrap();
     let mut destination = Connection::open(destination_path.path()).unwrap();
@@ -713,7 +819,7 @@ fn logical_preservation_digest_scans_storage_order_without_temp_sorting() {
     drop(backup);
 
     assert_eq!(
-        logical_data_digest(&destination, &tables, schema_v37::VERSION).unwrap(),
+        logical_data_digest(&destination, &tables, schema_v38::VERSION).unwrap(),
         source_digest
     );
     assert_eq!(
@@ -798,8 +904,8 @@ fn migration_receipt(
         phase,
         staging_file: format!("{STAGING_PREFIX}{}.sqlite3", &migration_id[..16]),
         target: ActiveStoreManifest {
-            file_name: format!("metadata-v37-{}.sqlite3", &migration_id[..16]),
-            schema_version: schema_v37::VERSION,
+            file_name: format!("metadata-v38-{}.sqlite3", &migration_id[..16]),
+            schema_version: schema_v38::VERSION,
             store_id_digest: source.store_id_digest.clone(),
         },
         source: source.clone(),
@@ -825,17 +931,18 @@ fn v35_migration_receipt(
     }
 }
 
-fn v36_migration_receipt(
+fn historical_migration_receipt(
     source: &ActiveStoreManifest,
     migration_id: String,
     phase: ReceiptPhase,
+    target_version: u32,
 ) -> MigrationReceipt {
     MigrationReceipt {
         phase,
         staging_file: format!("{STAGING_PREFIX}{}.sqlite3", &migration_id[..16]),
         target: ActiveStoreManifest {
-            file_name: format!("metadata-v36-{}.sqlite3", &migration_id[..16]),
-            schema_version: schema_v36::VERSION,
+            file_name: format!("metadata-v{target_version}-{}.sqlite3", &migration_id[..16]),
+            schema_version: target_version,
             store_id_digest: source.store_id_digest.clone(),
         },
         source: source.clone(),

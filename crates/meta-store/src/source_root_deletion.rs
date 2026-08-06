@@ -35,7 +35,7 @@ impl SourceRootDeletionPhase {
         }
     }
 
-    fn parse(value: &str) -> Result<Self> {
+    pub(super) fn parse(value: &str) -> Result<Self> {
         match value {
             "requested" => Ok(Self::Requested),
             "quiescing" => Ok(Self::Quiescing),
@@ -46,6 +46,10 @@ impl SourceRootDeletionPhase {
             "failed" => Ok(Self::Failed),
             _ => Err(MetaStoreError::invalid_value("source_root_deletion.phase")),
         }
+    }
+
+    pub(super) fn is_active(self) -> bool {
+        !matches!(self, Self::Complete | Self::Failed)
     }
 }
 
@@ -309,6 +313,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         if !root_exists {
             return Err(MetaStoreError::not_found("source_root"));
         }
+        crate::source_root_commit_fence::bump_epoch(&transaction, root_id)?;
         let snapshot = checkpoint::CurrentSourceRootDeletionSnapshot::read(&transaction, root_id)?;
         transaction
             .execute(

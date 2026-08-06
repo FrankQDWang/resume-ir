@@ -1,5 +1,21 @@
 # Progress
 
+## Issue #446 durable source-root revocation epoch foundation
+
+Issue #446 advances metadata to schema v38. Each root owns one bounded revocation epoch;
+each scan snapshot stores its writer's immutable capture. Every extant v37 root with any
+valid deletion receipt, including `failed`, migrates to one; no-history roots and legacy
+scans remain zero. Unknown phases, impossible pairs, invalid storage classes and saturation fail closed.
+
+One private typed fence owner serves migration, existing import-root admission, both scan writers
+and deletion begin. Coalesced keeps prior precedence; Started captures before coordination and
+validates after task, scope and snapshot writes. Deletion CAS stays in the existing `Immediate`
+receipt transaction. No public API, daemon/IPC, producer integration, reconciler, thread, queue or poll.
+Synthetic evidence covers migration, stale/equal-active rejection, coalescing, explicit writers,
+saturation, unknown phase and both rollback cuts. Strict v37 recovery covers all forward phases
+and initialization Preparing/Ready. Runtime admission is O(1); only COW scans receipt history;
+storage grows by two fixed integer columns.
+
 ## Issue #443 one-time legacy Quiescing deletion reconciliation
 
 Issue #443 keeps `MetaStore::begin_source_root_deletion_attempt` as the sole

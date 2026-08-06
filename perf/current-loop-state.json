@@ -1,16 +1,16 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_active",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "correctness_passed",
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "26c3cc445d08d71b6d94b53c39548d853cdca2709a42e29e8ebfd9e789646e01",
-    "acceptance_matrix_sha256": "dc00a615d21f4f932931c50923e45a61024a80c462ac3b7b1aed919f1af3570b",
+    "acceptance_matrix_sha256": "8af63c2df72571116ad2493df5c0e52f175dbc7c5900b3becc92d60d4eeaafd9",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "ff460194e98829088958d9dbebf7acaa30102112"
+    "git_head_sha": "9fc99ecd942055ec4cfb21259830d7b9574a20de"
   },
   "current_slice": "#446 durable source-root revocation epoch foundation",
   "hypothesis": {
@@ -18,11 +18,31 @@
     "acceptance_cell": "w0_docs",
     "expected_effect": "schema v38 durably binds source-root scans to a bounded revocation epoch, conservatively marks every extant root with deletion history as revoked generation 1, and advances the root epoch atomically with deletion admission while preserving current scan coalescing behavior",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/446",
-    "after_measurement_ref": "pending",
+    "after_measurement_ref": "PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation",
     "reprofile_ref": "not_applicable_correctness_slice",
-    "decision": "pending"
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "slice_active",
+      "to": "red_check_written",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/446"
+    },
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation"
+    },
+    {
+      "from": "red_check_written",
+      "to": "implementation_active",
+      "evidence_ref": "PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3756,7 +3776,8 @@
       {"command":"Issue #443 one-time reconciliation and transactional rollback synthetic tests","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"},
       {"command":"cargo test -p meta-store --locked","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"},
       {"command":"cargo test -p resume-daemon --test s20_ipc startup_recovers_source_root_deletion_with_the_same_receipt --locked -- --exact","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"},
-      {"command":"cargo clippy -p meta-store -p resume-daemon --all-targets --locked -- -D warnings and cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"}
+      {"command":"cargo clippy -p meta-store -p resume-daemon --all-targets --locked -- -D warnings and cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#issue-443-one-time-legacy-quiescing-deletion-reconciliation"},
+      {"command":"Issue #446 schema v38 focused and full meta-store tests, warnings-denied Clippy, format and governance gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-446-durable-source-root-revocation-epoch-foundation"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3771,10 +3792,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-446-source-root-revocation-epoch-foundation-2026-08-06",
-  "state_version": 677,
-  "previous_state_hash": "0170c395a4df32278ec9e849e14555ef73681bd3b9cf9fc0e74e69c1a8ef379d",
-  "expected_state_version": 677,
-  "last_confirmed_side_effect": "issue_446_activation_contract_selected",
+  "state_version": 680,
+  "previous_state_hash": "424bef7adf96549dbf365814dbe3f06ba8af932f9b29ce6d10be3611d747f8b7",
+  "expected_state_version": 680,
+  "last_confirmed_side_effect": "issue_446_implementation_verified",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

@@ -877,20 +877,8 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
-        let deleting = transaction
-            .query_row(
-                "SELECT EXISTS(
-                    SELECT 1 FROM source_root_deletion
-                    WHERE root_id = ?1 AND phase NOT IN ('complete', 'failed')
-                 )",
-                params![root_id.as_str()],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(MetaStoreError::storage)?
-            != 0;
-        if deleting {
-            return Err(MetaStoreError::invalid_transition());
-        }
+        let root_revocation_epoch =
+            super::source_root_commit_fence::admit_scan(&transaction, root_id)?;
         let root_state = transaction
             .query_row(
                 "SELECT state FROM source_root WHERE id = ?1",
@@ -910,13 +898,14 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             .execute(
                 "INSERT INTO scan_snapshot (
                     id, root_id, trigger, phase, completeness,
-                    started_at_seconds, updated_at_seconds
-                 ) VALUES (?1, ?2, ?3, 'queued', 'unknown', ?4, ?4)",
+                    started_at_seconds, updated_at_seconds, root_revocation_epoch
+                 ) VALUES (?1, ?2, ?3, 'queued', 'unknown', ?4, ?4, ?5)",
                 params![
                     scan_id,
                     root_id.as_str(),
                     trigger.storage(),
-                    now.as_unix_seconds()
+                    now.as_unix_seconds(),
+                    root_revocation_epoch
                 ],
             )
             .map_err(MetaStoreError::storage)?;
@@ -980,6 +969,8 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             }
             close_orphaned_active_scan(&transaction, &active, now)?;
         }
+        let root_revocation_epoch =
+            super::source_root_commit_fence::capture_scan_epoch(&transaction, root_id)?;
         let task_head = coordinate_import_root_task_head_in_connection(
             &transaction,
             ImportRootTaskHeadRequest::Configured {
@@ -1015,16 +1006,22 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             .execute(
                 "INSERT INTO scan_snapshot (
                     id, root_id, trigger, phase, completeness,
-                    started_at_seconds, updated_at_seconds
-                 ) VALUES (?1, ?2, ?3, 'queued', 'unknown', ?4, ?4)",
+                    started_at_seconds, updated_at_seconds, root_revocation_epoch
+                 ) VALUES (?1, ?2, ?3, 'queued', 'unknown', ?4, ?4, ?5)",
                 params![
                     persisted_task.id.as_str(),
                     root_id.as_str(),
                     trigger.storage(),
-                    now.as_unix_seconds()
+                    now.as_unix_seconds(),
+                    root_revocation_epoch
                 ],
             )
             .map_err(MetaStoreError::storage)?;
+        super::source_root_commit_fence::validate_scan_commit(
+            &transaction,
+            root_id,
+            root_revocation_epoch,
+        )?;
         let snapshot = ScanSnapshot {
             id: persisted_task.id.as_str().to_string(),
             root_id: root_id.clone(),
