@@ -4085,3 +4085,70 @@ fn assert_redacted_store_error(error: meta_store::MetaStoreError) {
         assert!(!debug.contains(leaked), "debug leaked {leaked}");
     }
 }
+
+#[test]
+fn failed_root_deletion_recovery_keeps_requeued_ocr_work_claimable() {
+    let store = migrated_store();
+    let base = 1_800_005_000;
+    let root_path = "/synthetic/ocr-claim/failed-deletion-recovery";
+    let root = begin_ocr_claim_root(&store, root_path, "ocr-failed-deletion-recovery", base);
+    let (document_id, revision, job_id) = enqueue_bound_ocr_source_in_root(
+        &store,
+        &root,
+        root_path,
+        "ocr-failed-deletion-recovery",
+        "failed-deletion-recovery",
+        UnixTimestamp::from_unix_seconds(base),
+    );
+
+    // An OCR worker polls while the deletion is active; the wholly invalid
+    // window is settled with a durable discard tombstone.
+    store
+        .begin_source_root_deletion(&root, UnixTimestamp::from_unix_seconds(base + 1))
+        .unwrap();
+    assert!(store
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(base + 2))
+        .unwrap()
+        .is_none());
+    let settled = store.ingest_job_by_id(&job_id).unwrap().unwrap();
+    assert_eq!(settled.status, IngestJobStatus::Completed);
+
+    // The deletion then fails; the root and all its current
+    // document/revision/triage/occurrence rows remain authoritative.
+    store
+        .set_source_root_deletion_phase(
+            &root,
+            meta_store::SourceRootDeletionPhase::Failed,
+            UnixTimestamp::from_unix_seconds(base + 3),
+        )
+        .unwrap();
+    let document = store.document_by_id(&document_id).unwrap().unwrap();
+    assert_eq!(document.status, DocumentStatus::OcrRequired);
+
+    // A root rescan requeues the terminal job for the still-current triage;
+    // the renewal also retires the now-stale discard tombstone.
+    let requeued = store
+        .enqueue_ocr_job_for_source_triage(
+            &revision.id,
+            meta_store::CurrentClassifierEpoch::parse(CLASSIFIER_EPOCH).unwrap(),
+            UnixTimestamp::from_unix_seconds(base + 4),
+        )
+        .unwrap();
+    assert_eq!(requeued.job.id, job_id);
+    assert_eq!(requeued.job.status, IngestJobStatus::Queued);
+    assert_eq!(store.ocr_job_discard_reason(&job_id).unwrap(), None);
+
+    // The requeued healthy job under the recovered root must be claimable.
+    let claimed = store
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(base + 5))
+        .unwrap();
+    assert_eq!(
+        claimed.as_ref().map(|claimed| claimed.job.id.clone()),
+        Some(job_id.clone()),
+        "job after failed deletion recovery must remain claimable; actual job row: {:?}",
+        store.ingest_job_by_id(&job_id).unwrap().unwrap()
+    );
+    let claimed = claimed.unwrap();
+    assert_eq!(claimed.job.status, IngestJobStatus::Running);
+    assert_eq!(claimed.job.attempt_count, 1);
+}

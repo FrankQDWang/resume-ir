@@ -106,6 +106,19 @@ Reviewed tree `999375159135a6460edf89c9fac35e95fd509671` matches the exact four-
 privacy gates passed. Known baseline-blocked native s4/s50/s81/s82 configuration
 and the old s807 rootless fixture remain out of this closeout.
 
+Post-merge corrective review of the starvation fix found one reachable regression: a
+queued job under a root whose deletion was later marked `failed` had already received a
+wholesale-settlement discard tombstone, and because that tombstone is immutable and
+consulted by claim-side stale settlement, the legally requeued job was instantly
+re-completed on the next claim and its OCR work was permanently lost. The corrective
+keeps wholesale settlement and the tombstone contract unchanged and instead retires the
+now-stale tombstone inside the existing renewal update, whose predicate already proves
+the revision/triage pair is current again. A deterministic regression walks
+enqueue, active-deletion settlement, `failed` recovery, requeue and claim, and the
+prior temporary review witnesses confirmed bounded two-batch work, cross-call progress
+past more than 512 invalid heads, and that a batch holding a current job is never
+settled wholesale.
+
 ## Issue #451 atomic source-root-bound import commit
 
 Issue #451 closes the configured-import orphan race without a new schema or queue. All

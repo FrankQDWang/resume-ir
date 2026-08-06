@@ -74,7 +74,7 @@ pub(super) fn enqueue_ocr_job_for_source_triage_in_connection(
         let renewed_max_attempts = attempt_count
             .checked_add(3)
             .ok_or_else(|| MetaStoreError::invalid_value("ingest_job.max_attempts"))?;
-        connection
+        let renewed = connection
             .execute(
                 "UPDATE ingest_job
                  SET status = ?1, max_attempts = ?2,
@@ -115,7 +115,21 @@ pub(super) fn enqueue_ocr_job_for_source_triage_in_connection(
                 ],
             )
             .map_err(MetaStoreError::storage)?
-            == 1
+            == 1;
+        if renewed {
+            // The renewal predicate above proved the revision/triage pair is
+            // current again, so a discard tombstone recorded while the pair
+            // was invalid no longer describes this job. It must be removed,
+            // or claim-side stale settlement would immediately re-complete
+            // the renewed attempt and the OCR work would never run.
+            connection
+                .execute(
+                    "DELETE FROM ocr_job_discard WHERE ingest_job_id = ?1",
+                    params![job_id.as_str()],
+                )
+                .map_err(MetaStoreError::storage)?;
+        }
+        renewed
     } else {
         connection
             .execute(
