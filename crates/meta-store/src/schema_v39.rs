@@ -32,4 +32,15 @@ CREATE TABLE ocr_claim_source_fence (
 
 CREATE INDEX ocr_claim_source_fence_revision_idx
     ON ocr_claim_source_fence(source_revision_id, root_id, relative_path);
+
+CREATE INDEX ingest_job_ocr_claim_queue_idx
+    ON ingest_job(queued_at_seconds)
+    WHERE kind = 'ocr_document'
+      AND (
+        status = 'queued'
+        OR (
+          status IN ('interrupted', 'failed_retryable')
+          AND attempt_count < max_attempts
+        )
+      );
 "#;

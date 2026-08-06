@@ -130,6 +130,52 @@ fn pdf_reprocess_backfill_uses_a_bounded_lookup_and_leaves_no_schema_artifact() 
 }
 
 #[test]
+fn ocr_claim_candidate_query_plan_is_bounded_by_job() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let query = format!(
+        "EXPLAIN QUERY PLAN {}",
+        crate::source_root_ocr_claim_fence::claim_next_candidates_sql()
+    );
+    let plan = store
+        .connection
+        .borrow()
+        .prepare(&query)
+        .unwrap()
+        .query_map(
+            rusqlite::named_params! {
+                ":candidate_limit": 256_i64,
+                ":document_status": "ocr_required",
+                ":triage_status": "ocr_backlog",
+                ":max_root_epoch": schema_v38::MAX_ROOT_REVOCATION_EPOCH,
+            },
+            |row| row.get::<_, String>(3),
+        )
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert!(
+        plan.iter().any(|detail| {
+            detail.contains("SCAN job USING INDEX ingest_job_ocr_claim_queue_idx")
+        }),
+        "{plan:?}"
+    );
+    assert!(
+        plan.iter().any(|detail| {
+            detail
+                .contains("SEARCH candidate_occurrence USING INDEX source_occurrence_revision_idx")
+        }),
+        "{plan:?}"
+    );
+    assert!(
+        plan.iter()
+            .all(|detail| !detail.contains("SCAN source_root") && !detail.contains("SCAN document")),
+        "{plan:?}"
+    );
+}
+
+#[test]
 fn v38_running_ocr_job_reopens_without_authority_then_reclaims_with_v39_fence() {
     let store = EphemeralMetaStore::open_in_memory().unwrap();
     store.run_migrations().unwrap();
@@ -192,6 +238,7 @@ fn v38_running_ocr_job_reopens_without_authority_then_reclaims_with_v39_fence() 
         .borrow()
         .execute_batch(
             "DROP TABLE ocr_claim_source_fence;
+             DROP INDEX ingest_job_ocr_claim_queue_idx;
              DELETE FROM forward_migration_history WHERE to_version = 39;
              DELETE FROM schema_migrations WHERE version = 39;",
         )
