@@ -9688,8 +9688,17 @@ fn simulate_index_snapshot_corrupt_probe_dir(
         None,
         first_now,
     )?;
-    import_processing::insert_new_configured_task_head(&store, &task, &scope, &processing_contract)
-        .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let requested_head = (task, scope);
+    let task = import_source_scan::coordinate_direct_import_tasks(
+        &store,
+        std::slice::from_ref(&requested_head),
+        &processing_contract,
+        first_now,
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?
+    .into_iter()
+    .next()
+    .ok_or_else(|| CliError::user("fault simulation probe failed"))?;
     let _task_owner_lock = ImportTaskOwnerLock::acquire(probe_dir, &task.id)
         .map_err(|_| CliError::user("fault simulation probe failed"))?;
     let claimed_task =
@@ -11026,12 +11035,16 @@ fn witness_command(args: &[String]) -> Result<()> {
             None,
             now,
         )?;
-        import_processing::insert_new_configured_task_head(
+        let requested_head = (task, scope);
+        let task = import_source_scan::coordinate_direct_import_tasks(
             &store,
-            &task,
-            &scope,
+            std::slice::from_ref(&requested_head),
             &processing_contract,
-        )?;
+            now,
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| CliError::user("source scan task is unavailable"))?;
         let _task_owner_lock = ImportTaskOwnerLock::acquire(&temp_dirs.data_dir, &task.id)
             .map_err(|_| CliError::user("unable to acquire import task owner lock"))?;
         let claimed_task =
@@ -16704,9 +16717,16 @@ fn run_claimed_ocr_job(
                             now,
                         )
                         .map_err(CliError::store)?;
-                        store
-                            .upsert_ocr_page_cache_entry(&entry)
-                            .map_err(CliError::store)?;
+                        if !store
+                            .upsert_ocr_page_cache_entry(job, &entry)
+                            .map_err(CliError::store)?
+                        {
+                            return Ok(OcrWorkerSummary {
+                                documents_processed: 0,
+                                cache_writes,
+                                cache_hits,
+                            });
+                        }
                         return Err(CliError::user(
                             "ocr worker blocked: requested OCR language pack is unavailable",
                         ));
@@ -16718,9 +16738,16 @@ fn run_claimed_ocr_job(
                             now,
                         )
                         .map_err(CliError::store)?;
-                        store
-                            .upsert_ocr_page_cache_entry(&entry)
-                            .map_err(CliError::store)?;
+                        if !store
+                            .upsert_ocr_page_cache_entry(job, &entry)
+                            .map_err(CliError::store)?
+                        {
+                            return Ok(OcrWorkerSummary {
+                                documents_processed: 0,
+                                cache_writes,
+                                cache_hits,
+                            });
+                        }
                         return Err(CliError::user(
                             "ocr worker blocked: local OCR command failed or unavailable",
                         ));
@@ -16745,9 +16772,16 @@ fn run_claimed_ocr_job(
                         now,
                     )
                     .map_err(CliError::store)?;
-                    store
-                        .upsert_ocr_page_cache_entry(&entry)
-                        .map_err(CliError::store)?;
+                    if !store
+                        .upsert_ocr_page_cache_entry(job, &entry)
+                        .map_err(CliError::store)?
+                    {
+                        return Ok(OcrWorkerSummary {
+                            documents_processed: 0,
+                            cache_writes,
+                            cache_hits,
+                        });
+                    }
                     return Err(CliError::user(
                         "ocr worker blocked: local OCR command failed or unavailable",
                     ));
@@ -16769,9 +16803,16 @@ fn run_claimed_ocr_job(
                         now,
                     )
                     .map_err(CliError::store)?;
-                    store
-                        .upsert_ocr_page_cache_entry(&entry)
-                        .map_err(CliError::store)?;
+                    if !store
+                        .upsert_ocr_page_cache_entry(job, &entry)
+                        .map_err(CliError::store)?
+                    {
+                        return Ok(OcrWorkerSummary {
+                            documents_processed: 0,
+                            cache_writes,
+                            cache_hits,
+                        });
+                    }
                     return Err(CliError::user(
                         "ocr worker blocked: local OCR command failed or unavailable",
                     ));
@@ -16801,9 +16842,16 @@ fn run_claimed_ocr_job(
                     now,
                 )
                 .map_err(CliError::store)?;
-                store
-                    .upsert_ocr_page_cache_entry(&entry)
-                    .map_err(CliError::store)?;
+                if !store
+                    .upsert_ocr_page_cache_entry(job, &entry)
+                    .map_err(CliError::store)?
+                {
+                    return Ok(OcrWorkerSummary {
+                        documents_processed: 0,
+                        cache_writes,
+                        cache_hits,
+                    });
+                }
                 return Err(CliError::user(
                     "ocr worker blocked: local OCR command failed or unavailable",
                 ));
@@ -16820,9 +16868,16 @@ fn run_claimed_ocr_job(
             now,
         )
         .map_err(CliError::store)?;
-        store
-            .upsert_ocr_page_cache_entry(&entry)
-            .map_err(CliError::store)?;
+        if !store
+            .upsert_ocr_page_cache_entry(job, &entry)
+            .map_err(CliError::store)?
+        {
+            return Ok(OcrWorkerSummary {
+                documents_processed: 0,
+                cache_writes,
+                cache_hits,
+            });
+        }
         page_texts.push(page.text().to_string());
         confidence_sum += page.confidence();
         confidence_count += 1;

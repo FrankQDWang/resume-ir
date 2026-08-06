@@ -1,9 +1,9 @@
 use std::str::FromStr;
 
 use meta_store::{
-    ImportProcessingContract, ImportRootTaskHeadBatchOutcome, ImportRootTaskHeadBatchRejection,
-    ImportRootTaskHeadOutcome, ImportRootTaskHeadRequest, ImportScanScope, ImportTask,
-    ImportTaskId, OwnedMetaStore, ScanTrigger, SourceRootScanCoordination, UnixTimestamp,
+    ImportProcessingContract, ImportRootTaskHeadOutcome, ImportScanScope, ImportTask, ImportTaskId,
+    OwnedMetaStore, ScanTrigger, SourceRootRegistration, SourceRootRegistrationAvailability,
+    SourceRootScanCoordination, UnixTimestamp,
 };
 
 use crate::{CliError, Result};
@@ -28,35 +28,30 @@ pub(crate) fn coordinate_direct_import_tasks(
             "direct import cannot mix managed and unmanaged source roots",
         ));
     }
-    if managed_count == 0 {
-        let requests = requested_heads
+    let roots = if managed_count == 0 {
+        let registrations = requested_heads
             .iter()
-            .map(|(task, scope)| ImportRootTaskHeadRequest::Configured {
-                task,
-                scope,
-                processing_contract,
+            .map(|(task, _)| SourceRootRegistration {
+                canonical_path: task.root_path.clone(),
+                requested_path: task.root_path.clone(),
+                display_label: "Direct import".to_string(),
+                availability: SourceRootRegistrationAvailability::Available,
             })
             .collect::<Vec<_>>();
-        let outcomes = match store
-            .coordinate_import_root_task_heads(&requests)
+        store
+            .register_source_roots_atomically(&registrations, now)
             .map_err(CliError::store)?
-        {
-            ImportRootTaskHeadBatchOutcome::Committed { outcomes } => outcomes,
-            ImportRootTaskHeadBatchOutcome::Rejected(rejection) => {
-                return Err(import_root_batch_rejection(rejection));
-            }
-        };
-        return outcomes
+    } else {
+        managed_roots
             .into_iter()
-            .map(import_task_from_head_outcome)
-            .collect();
-    }
+            .map(|root| root.expect("managed source-root count was validated"))
+            .collect()
+    };
 
     requested_heads
         .iter()
-        .zip(managed_roots)
+        .zip(roots)
         .map(|((task, scope), root)| {
-            let root = root.expect("managed source-root count was validated");
             store
                 .activate_source_root_pipeline(&root.id, now)
                 .map_err(CliError::store)?;
@@ -88,18 +83,6 @@ pub(crate) fn coordinate_direct_import_tasks(
             }
         })
         .collect()
-}
-
-fn import_root_batch_rejection(rejection: ImportRootTaskHeadBatchRejection) -> CliError {
-    match rejection {
-        ImportRootTaskHeadBatchRejection::RunningTaskConflict => {
-            CliError::user("import task is already running")
-        }
-        ImportRootTaskHeadBatchRejection::RootPaused => CliError::user("managed root is paused"),
-        ImportRootTaskHeadBatchRejection::MigrationRebuildSuperseded => {
-            CliError::user("offline import is blocked until migration rebuild completes")
-        }
-    }
 }
 
 fn import_task_from_head_outcome(outcome: ImportRootTaskHeadOutcome) -> Result<ImportTask> {

@@ -7,7 +7,7 @@ use std::sync::{
 use meta_store::{
     ContentDigest, IdentityInsertOutcome, IngestJobStatus, MetaStoreErrorClass, OcrAttemptFailure,
     OcrAttemptFailureOutcome, OwnedMetaStore, SearchProjectionTransitionOutcome,
-    SearchPublicationState, SourceRevision, UnixTimestamp,
+    SearchPublicationState, SourceRevision, SourceRootId, UnixTimestamp,
 };
 
 use crate::index_claimed_ocr_text_with_policy_and_preparer;
@@ -22,6 +22,12 @@ struct CompetingPublicationVectorizer {
 struct ClaimSupersedingVectorizer {
     store: Mutex<OwnedMetaStore>,
     claimed: meta_store::ClaimedOcrJob,
+    generation: Mutex<Option<String>>,
+}
+
+struct DeletionSupersedingVectorizer {
+    store: Mutex<OwnedMetaStore>,
+    root_id: SourceRootId,
     generation: Mutex<Option<String>>,
 }
 
@@ -121,6 +127,41 @@ impl SearchPublicationVectorizer for ClaimSupersedingVectorizer {
                 .unwrap(),
             OcrAttemptFailureOutcome::Retryable
         );
+        Ok(synthetic_embeddings(self, inputs))
+    }
+}
+
+impl SearchPublicationVectorizer for DeletionSupersedingVectorizer {
+    fn model_id(&self) -> &str {
+        "synthetic-deletion-supersession-v1"
+    }
+
+    fn dimension(&self) -> usize {
+        2
+    }
+
+    fn max_batch_inputs(&self) -> usize {
+        4
+    }
+
+    fn max_text_bytes(&self) -> usize {
+        65_536
+    }
+
+    fn embed_batch(
+        &self,
+        inputs: &[SearchPublicationEmbeddingInput],
+        _is_cancelled: &dyn Fn() -> bool,
+    ) -> std::result::Result<Vec<SearchPublicationEmbeddingOutput>, SearchPublicationEmbeddingFailure>
+    {
+        let store = self.store.lock().unwrap();
+        *self.generation.lock().unwrap() = Some(capture_interrupted_generation(&store));
+        store
+            .begin_source_root_deletion(
+                &self.root_id,
+                UnixTimestamp::from_unix_seconds(1_700_001_036),
+            )
+            .unwrap();
         Ok(synthetic_embeddings(self, inputs))
     }
 }
@@ -575,6 +616,51 @@ fn ocr_claim_supersession_retires_the_abandoned_validated_generation() {
     .unwrap();
 
     assert_eq!(outcome, OcrTextIndexOutcome::Superseded);
+    let generation = vectorizer.generation.lock().unwrap().clone().unwrap();
+    assert_abandoned_generation_retired(&data_dir, &store, &generation);
+}
+
+#[test]
+fn source_root_deletion_during_ocr_publication_rolls_back_facts_and_retires_generation() {
+    let temp = TestDir::new("ocr-root-deletion-supersession");
+    let data_dir = temp.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+    let store = create_test_store(&data_dir);
+    initialize_ready_empty_search(
+        &data_dir,
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_001_033),
+    );
+    let document = test_document("ocr-root-deletion", DocumentStatus::OcrRequired);
+    let claimed = claim_ocr_document(
+        &store,
+        &document,
+        UnixTimestamp::from_unix_seconds(1_700_001_034),
+    );
+    let root = store
+        .source_root_by_canonical_path("/synthetic/ocr-publication")
+        .unwrap()
+        .unwrap();
+    let vectorizer = Arc::new(DeletionSupersedingVectorizer {
+        store: Mutex::new(store.open_sibling().unwrap()),
+        root_id: root.id,
+        generation: Mutex::new(None),
+    });
+
+    let outcome = index_claimed_ocr_text(
+        &data_dir,
+        &store,
+        &claimed,
+        &synthetic_resume_text("Deletion Superseded", "Rust Search"),
+        Some(0.9),
+        Some(1),
+        UnixTimestamp::from_unix_seconds(1_700_001_035),
+        &SearchPublicationVectorization::enabled(vectorizer.clone()),
+    )
+    .unwrap();
+
+    assert_eq!(outcome, OcrTextIndexOutcome::Superseded);
+    assert_ocr_publication_facts_absent(&store, &document, &claimed, IngestJobStatus::Completed);
     let generation = vectorizer.generation.lock().unwrap().clone().unwrap();
     assert_abandoned_generation_retired(&data_dir, &store, &generation);
 }

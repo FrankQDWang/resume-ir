@@ -71,6 +71,7 @@ mod schema_v35;
 mod schema_v36;
 mod schema_v37;
 mod schema_v38;
+mod schema_v39;
 mod search_publication;
 mod search_publication_session;
 mod search_snapshot;
@@ -78,6 +79,7 @@ mod source_file_observation;
 mod source_root_bound_import_commit;
 mod source_root_commit_fence;
 mod source_root_deletion;
+mod source_root_ocr_claim_fence;
 mod source_root_privacy;
 mod source_roots;
 #[cfg(test)]
@@ -131,7 +133,7 @@ pub type OwnedMetaStore = MetadataStore<OwnedStoreAccess>;
 pub type EphemeralMetaStore = MetadataStore<EphemeralStoreAccess>;
 
 /// Exact metadata schema accepted and produced by the current binary.
-pub const CURRENT_SCHEMA_VERSION: u32 = schema_v38::VERSION;
+pub const CURRENT_SCHEMA_VERSION: u32 = schema_v39::VERSION;
 
 pub use source_file_observation::{
     SourceFileObservation, StrongSourceFileObservation, SOURCE_FILE_OBSERVATION_ASSURANCE,
@@ -1009,7 +1011,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
     }
 
     fn initialize_current_schema(&self) -> Result<MigrationReport> {
-        self.initialize_empty_schema(schema_v38::VERSION)
+        self.initialize_empty_schema(schema_v39::VERSION)
     }
 
     fn initialize_empty_schema(&self, target_version: u32) -> Result<MigrationReport> {
@@ -1031,7 +1033,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
     /// Test-only entrypoint for constructing historical schema fixtures.
     #[cfg(any(test, feature = "migration-test-support"))]
     pub fn run_migrations(&self) -> Result<MigrationReport> {
-        self.apply_schema_history_to(schema_v38::VERSION)
+        self.apply_schema_history_to(schema_v39::VERSION)
     }
 
     fn apply_schema_history_to(&self, target_version: u32) -> Result<MigrationReport> {
@@ -1894,39 +1896,39 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         Ok(document_ids)
     }
 
-    pub fn upsert_ocr_page_cache_entry(&self, entry: &OcrPageCacheEntry) -> Result<()>
+    pub fn upsert_ocr_page_cache_entry(
+        &self,
+        claimed: &ClaimedOcrJob,
+        entry: &OcrPageCacheEntry,
+    ) -> Result<bool>
     where
         Access: MetadataStoreWriteAccess,
     {
         validate_ocr_page_cache_entry(entry)?;
-        let connection = self.connection.borrow();
-        connection
+        if entry.key.file_content_hash != claimed.source_fingerprint() {
+            return Err(MetaStoreError::invalid_value("ocr_page_cache.claim"));
+        }
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(MetaStoreError::storage)?;
+        if !source_root_ocr_claim_fence::is_current(&transaction, claimed)? {
+            source_root_ocr_claim_fence::settle_superseded(
+                &transaction,
+                claimed,
+                entry.updated_at,
+            )?;
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(false);
+        }
+        transaction
             .execute(
                 "\
                 INSERT INTO ocr_page_cache (
                     file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile, text,
                     confidence, engine_profile, duration_ms, status, error_kind, updated_at_seconds,
                     word_boxes_json
-                )
-                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM source_revision AS revision
-                    JOIN document ON document.id = revision.document_id
-                    JOIN source_occurrence AS occurrence
-                      ON occurrence.source_revision_id = revision.id
-                     AND occurrence.document_id = revision.document_id
-                    WHERE revision.content_hash = ?1
-                      AND document.is_deleted = 0
-                      AND document.status <> 'deleted'
-                      AND occurrence.state = 'present'
-                      AND NOT EXISTS (
-                        SELECT 1
-                        FROM source_root_deletion AS deletion
-                        WHERE deletion.root_id = occurrence.root_id
-                          AND deletion.phase NOT IN ('complete', 'failed')
-                      )
-                )
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                 ON CONFLICT(file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile)
                 DO UPDATE SET
                     text = excluded.text,
@@ -1957,8 +1959,8 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                 ],
             )
             .map_err(MetaStoreError::storage)?;
-
-        Ok(())
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(true)
     }
 
     pub fn ocr_page_cache_entry(&self, key: &OcrPageCacheKey) -> Result<Option<OcrPageCacheEntry>> {
@@ -2574,9 +2576,11 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             return Err(MetaStoreError::invalid_value("ingest_job.ocr_attempt"));
         }
         let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        if !ocr_claim_is_current_in_connection(&transaction, claimed)? {
-            discard_superseded_ocr_claim_in_connection(&transaction, claimed, now)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(MetaStoreError::storage)?;
+        if !source_root_ocr_claim_fence::is_current(&transaction, claimed)? {
+            source_root_ocr_claim_fence::settle_superseded(&transaction, claimed, now)?;
             transaction.commit().map_err(MetaStoreError::storage)?;
             return Ok(OcrAttemptFailureOutcome::Superseded);
         }
@@ -2646,8 +2650,11 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         Access: MetadataStoreWriteAccess,
     {
         let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        let discarded = discard_ocr_claim_in_connection(&transaction, claimed, now)?.is_some();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(MetaStoreError::storage)?;
+        let discarded =
+            source_root_ocr_claim_fence::settle_superseded(&transaction, claimed, now)?.is_some();
         transaction.commit().map_err(MetaStoreError::storage)?;
         Ok(discarded)
     }
@@ -2656,16 +2663,31 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     where
         Access: MetadataStoreWriteAccess,
     {
-        let Some(job) =
-            self.claim_next_job_matching(Some(IngestJobKind::OcrDocument), false, now)?
-        else {
+        let claimed_id = {
+            let mut connection = self.connection.borrow_mut();
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(MetaStoreError::storage)?;
+            discard_stale_ocr_jobs_in_connection(&transaction, now)?;
+            let claimed_id = source_root_ocr_claim_fence::claim_next(&transaction, now)?;
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            claimed_id
+        };
+        let Some(claimed_id) = claimed_id else {
             return Ok(None);
         };
+        let job = self
+            .ingest_job_by_id(&claimed_id)?
+            .ok_or_else(|| MetaStoreError::not_found("ingest_job"))?;
         self.claimed_ocr_job_from_job(job).map(Some)
     }
 
     pub fn ocr_claim_is_current(&self, claimed: &ClaimedOcrJob) -> Result<bool> {
-        ocr_claim_is_current_in_connection(&self.connection.borrow(), claimed)
+        source_root_ocr_claim_fence::is_current(&self.connection.borrow(), claimed)
+    }
+
+    pub fn ocr_publication_activation_is_current(&self, claimed: &ClaimedOcrJob) -> Result<bool> {
+        source_root_ocr_claim_fence::activation_is_current(&self.connection.borrow(), claimed)
     }
 
     pub fn claim_next_job(&self, now: UnixTimestamp) -> Result<Option<IngestJob>>
@@ -2822,22 +2844,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                                 WHERE occurrence.document_id = ingest_job.document_id
                                   AND deletion.phase NOT IN ('complete', 'failed')
                             )
-                            AND (kind <> ?6 OR EXISTS (
-                                SELECT 1 FROM ocr_job_spec AS spec
-                                JOIN source_revision_triage AS triage
-                                  ON triage.source_revision_id = spec.source_revision_id
-                                 AND triage.triage_epoch = spec.triage_epoch
-                                JOIN source_revision AS revision
-                                  ON revision.id = spec.source_revision_id
-                                JOIN document
-                                  ON document.id = revision.document_id
-                                 AND document.content_hash = revision.content_hash
-                                WHERE spec.ingest_job_id = ingest_job.id
-                                  AND document.id = ingest_job.document_id
-                                  AND document.is_deleted = 0 AND document.status = 'ocr_required'
-                                  AND document.content_hash IS NOT NULL
-                                  AND triage.status = 'ocr_backlog'
-                            ))
+                            AND kind <> ?6
                         ORDER BY queued_at_seconds, rowid
                         LIMIT 1",
                     )
@@ -2883,6 +2890,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                         )
                         AND (?7 IS NULL OR kind = ?7)
                         AND (?8 = 0 OR resume_version_id IS NOT NULL)
+                        AND kind <> ?9
                         AND NOT EXISTS (
                             SELECT 1
                             FROM source_occurrence AS occurrence
@@ -2900,6 +2908,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                         ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
                         kind_filter,
                         bool_to_i64(require_resume_version_id),
+                        ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
                     ],
                 )
                 .map_err(MetaStoreError::storage)?;
@@ -6978,64 +6987,6 @@ fn upsert_document_in_connection(connection: &Connection, document: &Document) -
         )
         .map_err(MetaStoreError::storage)?;
 
-    Ok(())
-}
-
-fn ocr_claim_is_current_in_connection(
-    connection: &Connection,
-    claimed: &ClaimedOcrJob,
-) -> Result<bool> {
-    let job = &claimed.job;
-    connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM ingest_job AS job
-             JOIN ocr_job_spec AS spec ON spec.ingest_job_id = job.id
-             JOIN source_revision_triage AS triage
-               ON triage.source_revision_id = spec.source_revision_id
-              AND triage.triage_epoch = spec.triage_epoch
-             JOIN source_revision AS revision ON revision.id = spec.source_revision_id
-             JOIN document
-               ON document.id = job.document_id
-              AND document.id = revision.document_id
-              AND document.content_hash = revision.content_hash
-             WHERE job.id = ?1 AND job.document_id = ?2 AND job.kind = ?3
-               AND job.status = ?4 AND job.attempt_count = ?5 AND job.max_attempts = ?6
-               AND document.is_deleted = 0 AND document.status = ?7
-               AND document.content_hash = ?8 AND triage.status = ?9
-               AND spec.source_revision_id = ?10 AND spec.triage_epoch = ?11
-               AND NOT EXISTS (
-                    SELECT 1
-                    FROM source_occurrence AS occurrence
-                    JOIN source_root_deletion AS deletion
-                      ON deletion.root_id = occurrence.root_id
-                    WHERE occurrence.source_revision_id = spec.source_revision_id
-                      AND deletion.phase NOT IN ('complete', 'failed')
-               ))",
-            params![
-                job.id.as_str(),
-                job.document_id.as_str(),
-                ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
-                ingest_job_status_to_storage(IngestJobStatus::Running),
-                u32_to_i64(job.attempt_count),
-                u32_to_i64(job.max_attempts),
-                document_status_to_storage(DocumentStatus::OcrRequired),
-                claimed.source_fingerprint(),
-                ClassificationStatus::OcrBacklog.as_str(),
-                claimed.source_revision_id().as_str(),
-                claimed.triage_epoch(),
-            ],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|exists| exists == 1)
-        .map_err(MetaStoreError::storage)
-}
-
-fn discard_superseded_ocr_claim_in_connection(
-    connection: &Connection,
-    claimed: &ClaimedOcrJob,
-    discarded_at: UnixTimestamp,
-) -> Result<()> {
-    discard_ocr_claim_in_connection(connection, claimed, discarded_at)?;
     Ok(())
 }
 

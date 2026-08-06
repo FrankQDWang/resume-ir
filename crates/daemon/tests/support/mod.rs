@@ -16,8 +16,9 @@ use import_pipeline::{
     prepare_migration_rebuild_artifacts, ImportOptions, SearchPublicationVectorization,
 };
 use meta_store::{
-    ImportProcessingContract, ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask,
-    ImportTaskStatus, OwnedMetaStore, SearchProjectionServiceState, UnixTimestamp,
+    ImportProcessingContract, ImportRootKind, ImportRootTaskHeadOutcome, ImportScanProfile,
+    ImportScanScope, ImportTask, ImportTaskPurpose, ImportTaskStatus, OwnedMetaStore, ScanTrigger,
+    SearchProjectionServiceState, SourceRootScanCoordination, UnixTimestamp,
 };
 
 const EMBEDDING_MODEL_ID: &str = "intfloat-multilingual-e5-small-qint8-r1";
@@ -461,8 +462,14 @@ pub fn insert_import_task_with_scope(
     task: &ImportTask,
     scope: &ImportScanScope,
 ) -> ImportProcessingContract {
-    let contract = activate_default_processing_contract(store, task.queued_at);
-    insert_import_task_with_scope_for_contract(store, task, scope, &contract);
+    let contract = default_processing_contract();
+    insert_import_task_with_scope_for_contract(
+        store,
+        task,
+        scope,
+        &contract,
+        &SearchPublicationVectorization::default(),
+    );
     contract
 }
 
@@ -470,23 +477,28 @@ pub fn insert_import_task_with_reviewed_contract(
     store: &OwnedMetaStore,
     task: &ImportTask,
 ) -> ImportProcessingContract {
-    let contract = activate_reviewed_processing_contract(store, task.queued_at);
+    let contract = reviewed_processing_contract();
     insert_import_task_with_scope_for_contract(
         store,
         task,
         &empty_import_scan_scope(task),
         &contract,
+        &SearchPublicationVectorization::default(),
     );
     contract
 }
 
-fn insert_import_task_with_scope_for_contract(
+pub fn insert_import_task_with_scope_for_contract(
     store: &OwnedMetaStore,
     task: &ImportTask,
     scope: &ImportScanScope,
     contract: &ImportProcessingContract,
+    vectorization: &SearchPublicationVectorization,
 ) {
     assert_ne!(task.status, ImportTaskStatus::Completed);
+    store
+        .activate_migration_rebuild_contract(contract, task.queued_at)
+        .unwrap();
     prepare_migration_rebuild_artifacts(
         store,
         task.queued_at,
@@ -497,7 +509,7 @@ fn insert_import_task_with_scope_for_contract(
         store,
         task.queued_at,
         contract,
-        &SearchPublicationVectorization::default(),
+        vectorization,
         &import_pipeline::PipelineRunControl::default(),
     )
     .unwrap();
@@ -516,9 +528,49 @@ fn insert_import_task_with_scope_for_contract(
     };
     let mut initial_scope = scope.clone();
     initial_scope.updated_at = task.queued_at;
+    let root = store
+        .source_root_by_canonical_path(&task.root_path)
+        .unwrap()
+        .unwrap_or_else(|| {
+            store
+                .register_source_root(
+                    &task.root_path,
+                    &scope.requested_root_path,
+                    "Synthetic import fixture",
+                    task.queued_at,
+                )
+                .unwrap()
+        });
     store
-        .insert_import_task_with_scan_scope(&queued, &initial_scope, contract)
+        .activate_source_root_pipeline(&root.id, task.queued_at)
         .unwrap();
+    let SourceRootScanCoordination::Started {
+        snapshot,
+        task_head,
+    } = store
+        .coordinate_source_root_scan(
+            &root.id,
+            ScanTrigger::Manual,
+            &queued,
+            &initial_scope,
+            contract,
+            task.queued_at,
+        )
+        .unwrap()
+    else {
+        panic!("synthetic import fixture did not start an authoritative source-root scan");
+    };
+    assert_eq!(snapshot.id, task.id.as_str());
+    assert_eq!(snapshot.root_id, root.id);
+    assert!(matches!(
+        *task_head,
+        ImportRootTaskHeadOutcome::HeadInserted {
+            task: persisted_task,
+            scope: persisted_scope,
+            purpose: ImportTaskPurpose::ConfiguredCatchUp,
+            ..
+        } if persisted_task == queued && persisted_scope == initial_scope
+    ));
     if task.status != ImportTaskStatus::Queued {
         let running_at = task.started_at.unwrap_or(task.updated_at);
         let claimed = store
@@ -542,4 +594,26 @@ fn insert_import_task_with_scope_for_contract(
     let mut persisted_scope = scope.clone();
     persisted_scope.updated_at = task.updated_at;
     store.upsert_import_scan_scope(&persisted_scope).unwrap();
+    assert_eq!(
+        store.import_task_by_id(&task.id).unwrap().unwrap().status,
+        task.status
+    );
+    assert_eq!(
+        store
+            .import_scan_scope_by_task_id(&task.id)
+            .unwrap()
+            .unwrap(),
+        persisted_scope
+    );
+    let persisted_root = store
+        .source_root_by_canonical_path(&task.root_path)
+        .unwrap()
+        .unwrap();
+    let persisted_snapshot = store
+        .latest_scan_snapshot(&persisted_root.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(persisted_root.id, root.id);
+    assert_eq!(persisted_snapshot.id, task.id.as_str());
+    assert_eq!(persisted_snapshot.root_id, root.id);
 }

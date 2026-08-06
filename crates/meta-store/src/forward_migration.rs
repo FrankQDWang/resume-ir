@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, schema_v35, schema_v36,
-    schema_v37, schema_v38, MetaStoreError, Result, SourceRootId,
+    schema_v37, schema_v38, schema_v39, MetaStoreError, Result, SourceRootId,
 };
 
 const V29_TO_V30_NAME: &str = "metadata-forward-migration-history";
@@ -17,6 +17,7 @@ const V34_TO_V35_NAME: &str = "source-file-observation";
 const V35_TO_V36_NAME: &str = "source-root-deletion-attempt-evidence";
 const V36_TO_V37_NAME: &str = "source-root-deletion-checkpoint-protocol";
 const V37_TO_V38_NAME: &str = "source-root-revocation-epoch";
+const V38_TO_V39_NAME: &str = "source-root-ocr-claim-fence";
 const PDFIUM_PARSER_CONTRACT: &str = "parser-pdfium-v2";
 const PDF_REPROCESS_LOOKUP_INDEX: &str = "__migration_pdf_reprocess_resume_lookup";
 
@@ -92,7 +93,7 @@ pub(super) fn validate_chain(connection: &Connection, from: u32, to: u32) -> Res
 }
 
 pub(super) fn apply_current_schema(connection: &mut Connection, from: u32) -> Result<()> {
-    apply_chain(connection, from, schema_v38::VERSION)
+    apply_chain(connection, from, schema_v39::VERSION)
 }
 
 fn apply_step(connection: &mut Connection, step: &MigrationStep) -> Result<()> {
@@ -635,7 +636,56 @@ fn validate_v38(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn registry() -> [MigrationStep; 9] {
+fn apply_v38_to_v39(transaction: &Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(schema_v39::SCHEMA)
+        .map_err(MetaStoreError::migration)
+}
+
+fn validate_v39(connection: &Connection) -> Result<()> {
+    let (table_count, index_count, invalid_rows) = connection
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'table' AND name = 'ocr_claim_source_fence'),
+                (SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'index' AND name = 'ocr_claim_source_fence_revision_idx'),
+                (SELECT COUNT(*) FROM ocr_claim_source_fence AS fence
+                 LEFT JOIN ingest_job AS job ON job.id = fence.ingest_job_id
+                 LEFT JOIN ocr_job_spec AS spec ON spec.ingest_job_id = job.id
+                 LEFT JOIN source_revision AS revision
+                   ON revision.id = fence.source_revision_id
+                  AND revision.document_id = fence.document_id
+                 LEFT JOIN source_occurrence AS occurrence
+                   ON occurrence.root_id = fence.root_id
+                  AND occurrence.relative_path = fence.relative_path
+                 WHERE job.id IS NULL OR spec.ingest_job_id IS NULL OR revision.id IS NULL
+                    OR occurrence.root_id IS NULL
+                    OR spec.source_revision_id <> fence.source_revision_id
+                    OR spec.triage_epoch <> fence.triage_epoch
+                    OR job.document_id <> fence.document_id
+                    OR job.attempt_count <> fence.attempt_count
+                    OR typeof(fence.attempt_count) <> 'integer'
+                    OR fence.attempt_count NOT BETWEEN 1 AND 4294967295
+                    OR typeof(fence.root_revocation_epoch) <> 'integer'
+                    OR fence.root_revocation_epoch NOT BETWEEN 0 AND ?1)",
+            [schema_v38::MAX_ROOT_REVOCATION_EPOCH],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .map_err(MetaStoreError::storage)?;
+    if table_count != 1 || index_count != 1 || invalid_rows != 0 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    crate::source_root_ocr_claim_fence::validate_stored_phases(connection)
+}
+
+fn registry() -> [MigrationStep; 10] {
     [
         MigrationStep {
             from: schema_v29::VERSION,
@@ -708,6 +758,14 @@ fn registry() -> [MigrationStep; 9] {
             schema: schema_v38::SCHEMA,
             apply: apply_v37_to_v38,
             validate: validate_v38,
+        },
+        MigrationStep {
+            from: schema_v38::VERSION,
+            to: schema_v39::VERSION,
+            name: V38_TO_V39_NAME,
+            schema: schema_v39::SCHEMA,
+            apply: apply_v38_to_v39,
+            validate: validate_v39,
         },
     ]
 }

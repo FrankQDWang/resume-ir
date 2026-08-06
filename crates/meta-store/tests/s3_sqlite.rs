@@ -6,22 +6,22 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    ActiveSearchProjection, Candidate, CandidateId, ClassificationStatus, ContactHash,
-    ContentDigest, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId,
-    DocumentStatus, EntityMention, EntityMentionId, EntityType, EphemeralMetaStore, FileExtension,
-    FullTextSnapshotDescriptor, IdentityInsertOutcome, ImportRootKind, ImportRootPreset,
-    ImportScanBudgetKind, ImportScanError, ImportScanErrorKind, ImportScanErrorOperation,
-    ImportScanErrorSummary, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
-    ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus,
-    MetaStoreErrorClass, MetadataEncryptionState, MigrationRebuildBarrierToken,
-    MigrationRebuildPublicationAttemptAcquire, OcrPageCacheEntry, OcrPageCacheKey,
-    OcrPageCacheStatus, OcrWordBox, OwnedMetaStore, ReadMetaStore, ReasonCode, ResumeVersion,
-    ResumeVersionClassification, ResumeVersionId, ReviewDisposition, ScanTrigger,
+    ActiveSearchProjection, Candidate, CandidateId, ClaimedOcrJob, ClassificationStatus,
+    ContactHash, ContentDigest, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document,
+    DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType, EphemeralMetaStore,
+    FileExtension, FullTextSnapshotDescriptor, IdentityInsertOutcome, ImportRootKind,
+    ImportRootPreset, ImportScanBudgetKind, ImportScanError, ImportScanErrorKind,
+    ImportScanErrorOperation, ImportScanErrorSummary, ImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobId,
+    IngestJobKind, IngestJobStatus, MetaStoreErrorClass, MetadataEncryptionState,
+    MigrationRebuildBarrierToken, MigrationRebuildPublicationAttemptAcquire, OcrPageCacheEntry,
+    OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, OwnedMetaStore, ReadMetaStore, ReasonCode,
+    ResumeVersion, ResumeVersionClassification, ResumeVersionId, ReviewDisposition, ScanTrigger,
     SearchProjectionDigest, SearchPublicationCommit, SearchPublicationDraft,
     SearchPublicationOutcome, SearchPublicationSession, SearchPublicationState,
-    SearchPublicationValidation, SearchRepairReason, SourceRevision, TerminalDocumentUpdate,
-    UnixTimestamp, VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
-    CURRENT_SCHEMA_VERSION,
+    SearchPublicationValidation, SearchRepairReason, SourceRevision, SourceRevisionTriage,
+    SourceRootId, TerminalDocumentUpdate, UnixTimestamp, VectorSnapshotDescriptor,
+    WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH, CURRENT_SCHEMA_VERSION,
 };
 mod support;
 
@@ -53,6 +53,7 @@ fn migrations_are_idempotent_and_current_schema_is_queryable() {
         "import_task",
         "entity_mention",
         "ocr_page_cache",
+        "ocr_claim_source_fence",
         "worker_task_control",
         "import_scan_scope",
         "import_scan_error",
@@ -1290,7 +1291,7 @@ fn completed_embedding_update_jobs_can_be_requeued_for_vector_snapshot_rebuild()
 #[test]
 fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
     let store = migrated_store();
-    let content_hash = seed_active_ocr_cache_source(&store, "ocr-cache-success");
+    let (content_hash, claimed, _) = seed_active_ocr_cache_source(&store, "ocr-cache-success");
     let key =
         OcrPageCacheKey::new(content_hash.as_str(), 2, 300, "eng+chi_sim", "balanced").unwrap();
     let success = OcrPageCacheEntry::succeeded(
@@ -1303,7 +1304,9 @@ fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
     )
     .unwrap();
 
-    store.upsert_ocr_page_cache_entry(&success).unwrap();
+    assert!(store
+        .upsert_ocr_page_cache_entry(&claimed, &success)
+        .unwrap());
 
     assert_eq!(
         store.ocr_page_cache_entry(&key).unwrap(),
@@ -1324,7 +1327,9 @@ fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
         UnixTimestamp::from_unix_seconds(1_800_000_801),
     )
     .unwrap();
-    store.upsert_ocr_page_cache_entry(&retryable).unwrap();
+    assert!(store
+        .upsert_ocr_page_cache_entry(&claimed, &retryable)
+        .unwrap());
 
     let loaded = store
         .ocr_page_cache_entry(&key)
@@ -1339,7 +1344,7 @@ fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
 #[test]
 fn ocr_page_cache_persists_word_boxes_without_debug_payload_leak() {
     let store = migrated_store();
-    let content_hash = seed_active_ocr_cache_source(&store, "ocr-cache-word-boxes");
+    let (content_hash, claimed, _) = seed_active_ocr_cache_source(&store, "ocr-cache-word-boxes");
     let key = OcrPageCacheKey::new(content_hash.as_str(), 1, 300, "eng", "balanced").unwrap();
     let word_boxes = vec![
         OcrWordBox::new("SecretName", 12, 34, 56, 18, 0.92).unwrap(),
@@ -1356,7 +1361,9 @@ fn ocr_page_cache_persists_word_boxes_without_debug_payload_leak() {
     )
     .unwrap();
 
-    store.upsert_ocr_page_cache_entry(&success).unwrap();
+    assert!(store
+        .upsert_ocr_page_cache_entry(&claimed, &success)
+        .unwrap());
 
     let loaded = store
         .ocr_page_cache_entry(&key)
@@ -1392,6 +1399,81 @@ fn ocr_page_cache_rejects_invalid_keys_and_confidence() {
     assert!(OcrWordBox::new("", 1, 1, 1, 1, 0.5).is_err());
     assert!(OcrWordBox::new("word", 1, 1, 0, 1, 0.5).is_err());
     assert!(OcrWordBox::new("word", 1, 1, 1, 1, 1.5).is_err());
+}
+
+#[test]
+fn source_root_deletion_rejects_claimed_ocr_cache_write_without_partial_row() {
+    let store = migrated_store();
+    let (content_hash, claimed, root_id) =
+        seed_active_ocr_cache_source(&store, "ocr-cache-deletion");
+    let key = OcrPageCacheKey::new(content_hash.as_str(), 1, 300, "eng", "balanced").unwrap();
+    let entry = OcrPageCacheEntry::succeeded(
+        key.clone(),
+        "Synthetic stale OCR cache text",
+        0.8,
+        "fixture-engine",
+        7,
+        UnixTimestamp::from_unix_seconds(1_800_000_811),
+    )
+    .unwrap();
+    store
+        .begin_source_root_deletion(&root_id, UnixTimestamp::from_unix_seconds(1_800_000_812))
+        .unwrap();
+
+    assert!(!store.upsert_ocr_page_cache_entry(&claimed, &entry).unwrap());
+    assert_eq!(store.ocr_page_cache_entry(&key).unwrap(), None);
+}
+
+#[test]
+fn superseded_shared_document_claim_rebinds_without_consuming_failure_budget() {
+    let store = migrated_store();
+    let (content_hash, claimed, _) = seed_active_ocr_cache_source(&store, "ocr-cache-rebind");
+    let now = UnixTimestamp::from_unix_seconds(1_800_000_813);
+    let root_path = "/synthetic/ocr-cache/rebound";
+    let relative_path = "ocr-cache-rebind.pdf";
+    let root = store
+        .register_source_root(root_path, root_path, "OCR rebound root", now)
+        .unwrap();
+    store
+        .begin_scan(&root.id, "ocr-cache-rebind-scan", ScanTrigger::Manual, now)
+        .unwrap();
+    store
+        .observe_source_occurrence(
+            &root.id,
+            relative_path,
+            &claimed.job.document_id,
+            claimed.source_revision_id(),
+            "ocr-cache-rebind-scan",
+            now,
+        )
+        .unwrap();
+    let mut document = store
+        .document_by_id(&claimed.job.document_id)
+        .unwrap()
+        .unwrap();
+    document.normalized_path = format!("{root_path}/{relative_path}");
+    document.updated_at = now;
+    store.upsert_document(&document).unwrap();
+    let key = OcrPageCacheKey::new(content_hash.as_str(), 1, 300, "eng", "balanced").unwrap();
+    let entry = OcrPageCacheEntry::succeeded(
+        key.clone(),
+        "Synthetic rebound OCR text",
+        0.8,
+        "fixture-engine",
+        7,
+        now,
+    )
+    .unwrap();
+
+    assert!(!store.upsert_ocr_page_cache_entry(&claimed, &entry).unwrap());
+    let rebound = store.claim_next_ocr_job(now).unwrap().unwrap();
+    assert_eq!(rebound.job.id, claimed.job.id);
+    assert_eq!(
+        rebound.job.max_attempts - rebound.job.attempt_count,
+        claimed.job.max_attempts - claimed.job.attempt_count
+    );
+    assert!(store.upsert_ocr_page_cache_entry(&rebound, &entry).unwrap());
+    assert_eq!(store.ocr_page_cache_entry(&key).unwrap(), Some(entry));
 }
 
 #[test]
@@ -3233,11 +3315,17 @@ fn source_revision(document_id: &DocumentId) -> SourceRevision {
     )
 }
 
-fn seed_active_ocr_cache_source(store: &EphemeralMetaStore, label: &str) -> ContentDigest {
+fn seed_active_ocr_cache_source(
+    store: &EphemeralMetaStore,
+    label: &str,
+) -> (ContentDigest, ClaimedOcrJob, SourceRootId) {
     let now = UnixTimestamp::from_unix_seconds(1_800_000_790);
-    let document = document(label, false, DocumentStatus::Searchable);
+    let mut document = document(label, false, DocumentStatus::OcrRequired);
     let revision = source_revision(&document.id);
     let root_path = format!("/synthetic/ocr-cache/{label}");
+    let relative_path = format!("{label}.pdf");
+    document.normalized_path = format!("{root_path}/{relative_path}");
+    document.content_hash = Some(revision.content_hash.as_str().to_string());
     let root = store
         .register_source_root(&root_path, &root_path, label, now)
         .unwrap();
@@ -3254,15 +3342,32 @@ fn seed_active_ocr_cache_source(store: &EphemeralMetaStore, label: &str) -> Cont
     store
         .observe_source_occurrence(
             &root.id,
-            &format!("{label}.pdf"),
+            &relative_path,
             &document.id,
             &revision.id,
             &scan_id,
             now,
         )
         .unwrap();
+    store
+        .insert_source_revision_triage(&SourceRevisionTriage {
+            source_revision_id: revision.id.clone(),
+            status: ClassificationStatus::OcrBacklog,
+            triage_epoch: CLASSIFIER_EPOCH.to_string(),
+            reason_codes: vec![ReasonCode::OcrRequired],
+            triaged_at: now,
+        })
+        .unwrap();
+    store
+        .enqueue_ocr_job_for_source_triage(
+            &revision.id,
+            meta_store::CurrentClassifierEpoch::parse(CLASSIFIER_EPOCH).unwrap(),
+            now,
+        )
+        .unwrap();
+    let claimed = store.claim_next_ocr_job(now).unwrap().unwrap();
 
-    revision.content_hash
+    (revision.content_hash, claimed, root.id)
 }
 
 fn insert_resume_version(store: &EphemeralMetaStore, version: &ResumeVersion) {

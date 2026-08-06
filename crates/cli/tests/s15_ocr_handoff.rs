@@ -9,10 +9,10 @@ use import_pipeline::{
 use meta_store::{
     BeginScanOutcome, ClassificationStatus, ContentDigest, CurrentClassifierEpoch,
     DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus,
-    FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, OcrPageCacheEntry,
-    OcrPageCacheKey, OcrPageCacheStatus, OwnedMetaStore, ReadMetaStore, ReasonCode, ScanCounts,
-    ScanTrigger, SearchRepairReason, SourceRevision, SourceRevisionTriage, UnixTimestamp,
-    CLASSIFIER_EPOCH,
+    FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, OcrAttemptFailure,
+    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, OwnedMetaStore, ReadMetaStore,
+    ReasonCode, ScanCounts, ScanTrigger, SearchRepairReason, SourceRevision, SourceRevisionTriage,
+    SourceRootDeletionPhase, UnixTimestamp, CLASSIFIER_EPOCH,
 };
 
 #[test]
@@ -44,6 +44,24 @@ fn import_scanned_pdf_creates_durable_ocr_document_job_without_searchable_text()
     assert!(!import_stdout.contains(path_str(&fixture_root)));
 
     let store = create_owned_store(&data_dir);
+    let canonical_root = std::fs::canonicalize(&fixture_root).unwrap();
+    let canonical_root = path_str(&canonical_root);
+    let root = store
+        .source_root_by_canonical_path(canonical_root)
+        .unwrap()
+        .expect("unmanaged direct import registered its source root");
+    let task = store
+        .latest_import_task_by_root(canonical_root)
+        .unwrap()
+        .expect("unmanaged direct import persisted its task");
+    assert_eq!(
+        store
+            .latest_scan_snapshot(&root.id)
+            .unwrap()
+            .expect("unmanaged direct import persisted its scan snapshot")
+            .id,
+        task.id.as_str()
+    );
     let scanned = store
         .visible_documents()
         .unwrap()
@@ -80,6 +98,106 @@ fn import_scanned_pdf_creates_durable_ocr_document_job_without_searchable_text()
     let search_stdout = String::from_utf8_lossy(&search.stdout);
     assert!(search_stdout.contains("results: 0"));
     assert!(!search_stdout.contains("synthetic-scanned-resume.pdf"));
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn unmanaged_direct_import_ocr_claim_is_revoked_by_source_root_deletion() {
+    let data_dir = temp_dir("ocr-handoff-root-revocation-data");
+    let fixture_root = fixture_root();
+    import_fixtures(&data_dir, &fixture_root);
+
+    let store = create_owned_store(&data_dir);
+    let canonical_root = std::fs::canonicalize(&fixture_root).unwrap();
+    let root = store
+        .source_root_by_canonical_path(path_str(&canonical_root))
+        .unwrap()
+        .expect("direct import source root");
+    let scanned = scanned_document_from_owned(&store);
+    let claim_at = UnixTimestamp::from_unix_seconds(1_900_000_004);
+    let claimed = store
+        .claim_next_ocr_job(claim_at)
+        .unwrap()
+        .expect("root-bound OCR claim");
+    assert!(store.ocr_claim_is_current(&claimed).unwrap());
+
+    store
+        .begin_source_root_deletion(&root.id, UnixTimestamp::from_unix_seconds(1_900_000_005))
+        .unwrap();
+    assert!(!store.ocr_claim_is_current(&claimed).unwrap());
+    let key =
+        OcrPageCacheKey::new(scanned.content_hash.unwrap(), 1, 300, "eng", "balanced").unwrap();
+    let entry = OcrPageCacheEntry::failed_retryable(
+        key.clone(),
+        "synthetic_revoked_claim",
+        UnixTimestamp::from_unix_seconds(1_900_000_006),
+    )
+    .unwrap();
+    assert!(!store.upsert_ocr_page_cache_entry(&claimed, &entry).unwrap());
+    assert_eq!(store.ocr_page_cache_entry(&key).unwrap(), None);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn direct_import_coordination_failure_leaves_only_reusable_root() {
+    let data_dir = temp_dir("direct-import-coordination-retry-data");
+    let fixture_root = fixture_root();
+    let canonical_root = std::fs::canonicalize(&fixture_root).unwrap();
+    let canonical_root = path_str(&canonical_root);
+    let blocked_at = UnixTimestamp::from_unix_seconds(1_900_000_007);
+    let store = create_owned_store(&data_dir);
+    let root = store
+        .register_source_root(canonical_root, canonical_root, "Direct import", blocked_at)
+        .unwrap();
+    store
+        .begin_source_root_deletion(&root.id, blocked_at)
+        .unwrap();
+    drop(store);
+
+    let blocked = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+        ])
+        .output()
+        .expect("run deletion-blocked direct import");
+    assert!(!blocked.status.success());
+    let store = create_owned_store(&data_dir);
+    assert_eq!(
+        store.latest_import_task_by_root(canonical_root).unwrap(),
+        None
+    );
+    assert_eq!(store.latest_scan_snapshot(&root.id).unwrap(), None);
+    assert!(store.visible_documents().unwrap().is_empty());
+    store
+        .set_source_root_deletion_phase(
+            &root.id,
+            SourceRootDeletionPhase::Failed,
+            UnixTimestamp::from_unix_seconds(1_900_000_008),
+        )
+        .unwrap();
+    drop(store);
+
+    import_fixtures(&data_dir, &fixture_root);
+    let store = create_owned_store(&data_dir);
+    let task = store
+        .latest_import_task_by_root(canonical_root)
+        .unwrap()
+        .expect("retry persisted a root-bound task");
+    assert_eq!(
+        store
+            .latest_scan_snapshot(&root.id)
+            .unwrap()
+            .expect("retry persisted a root-bound snapshot")
+            .id,
+        task.id.as_str()
+    );
+    assert!(!store.visible_documents().unwrap().is_empty());
 
     remove_dir(&data_dir);
 }
@@ -332,7 +450,11 @@ printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME
     );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("ocr worker: completed"));
+    assert!(
+        stdout.contains("ocr worker: completed"),
+        "stdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(stdout.contains("documents processed: 1"));
     assert!(stdout.contains("cache writes: 1"));
     assert!(!stdout.contains("OCRS31UniqueToken"));
@@ -451,7 +573,11 @@ esac
     );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("ocr worker: completed"));
+    assert!(
+        stdout.contains("ocr worker: completed"),
+        "stdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(stdout.contains("documents processed: 1"));
     assert!(stdout.contains("cache writes: 2"));
     assert!(stdout.contains("cache hits: 0"));
@@ -841,7 +967,11 @@ fn ocr_worker_uses_tesseract_for_rendered_image_before_indexing() {
     );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("ocr worker: completed"));
+    assert!(
+        stdout.contains("ocr worker: completed"),
+        "stdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(stdout.contains("documents processed: 1"));
     assert!(stdout.contains("cache writes: 1"));
     assert!(stdout.contains("cache hits: 0"));
@@ -1181,6 +1311,12 @@ fn ocr_worker_indexes_succeeded_cache_hit_without_invoking_command() {
         let store = create_owned_store(&data_dir);
         let scanned = scanned_document_from_owned(&store);
         assert_eq!(scanned.status, DocumentStatus::OcrRequired);
+        let cache_at = UnixTimestamp::from_unix_seconds(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        );
         let cache_key = OcrPageCacheKey::new(
             scanned.content_hash.expect("content hash"),
             1,
@@ -1190,15 +1326,24 @@ fn ocr_worker_indexes_succeeded_cache_hit_without_invoking_command() {
         )
         .unwrap();
         let cache_entry = OcrPageCacheEntry::succeeded(
-            cache_key,
+            cache_key.clone(),
             "SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\nOCRS41CacheHitToken cached OCR text",
             0.84,
             "fixture-cache-engine",
             7,
-            UnixTimestamp::from_unix_seconds(1_900_000_041),
+            cache_at,
         )
         .unwrap();
-        store.upsert_ocr_page_cache_entry(&cache_entry).unwrap();
+        let claimed = store
+            .claim_next_ocr_job(cache_at)
+            .unwrap()
+            .expect("cache fixture OCR job");
+        assert!(store
+            .upsert_ocr_page_cache_entry(&claimed, &cache_entry)
+            .unwrap());
+        store
+            .finish_ocr_attempt_failure(&claimed, OcrAttemptFailure::Retryable, cache_at)
+            .unwrap();
     }
 
     let command = write_fixture_executable(
@@ -1569,6 +1714,7 @@ fn seed_ocr_pdf_document_with_bytes(
     std::fs::create_dir_all(&private_root).unwrap();
     let document_path = private_root.join("synthetic-scanned-resume.pdf");
     std::fs::write(&document_path, &bytes).unwrap();
+    let document_path = std::fs::canonicalize(document_path).unwrap();
     let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
         DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
         DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data dir is unowned"),

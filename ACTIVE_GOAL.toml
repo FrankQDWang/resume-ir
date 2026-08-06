@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = true
-scope_exception_reason = "Issue #454 is a reviewer-approved vertical correctness exception: 37 active paths and at most 35 implementation paths add the strict schema-v39 OCR claim fence, migrate both daemon and CLI OCR workers, and preserve the existing publication CAS as one atomic root-bound contract. Gross implementation change targets 2,200-2,800 lines and must stop above 3,400 or on active path 38. Scope-exception auto-merge remains forbidden."
+scope_exception_reason = "Issue #454 is a reviewer-approved vertical correctness exception: 44 active paths and at most 42 implementation paths add the strict schema-v39 OCR claim fence, migrate both daemon and CLI OCR workers, hard-cut unmanaged direct import onto the existing root-bound scan authority, retire its zero-caller rootless task-head helper, normalize every daemon integration fixture onto that same authority, and preserve the existing publication CAS as one atomic contract. Gross implementation change targets 2,200-2,800 lines and must stop above 3,400 or on active path 45. Scope-exception auto-merge remains forbidden."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -51,7 +51,14 @@ allowed_paths = [
   "crates/import-pipeline/src/tests/ocr_publication_tests.rs",
   "crates/daemon/src/daemon_contract_tests.rs",
   "crates/daemon/src/ocr_worker.rs",
+  "crates/daemon/tests/s4_daemon.rs",
+  "crates/daemon/tests/s48_search_ipc.rs",
+  "crates/daemon/tests/support/mod.rs",
   "crates/daemon/tests/s50_ocr_worker.rs",
+  "crates/daemon/tests/s81_daemon_kill.rs",
+  "crates/daemon/tests/s82_classifier_model.rs",
+  "crates/cli/src/import_processing.rs",
+  "crates/cli/src/import_source_scan.rs",
   "crates/cli/src/main.rs",
   "crates/cli/tests/s14_delete_search.rs",
   "crates/cli/tests/s15_ocr_handoff.rs",
@@ -69,13 +76,13 @@ optimization_layer = "L1"
 optimization_layer_selected = true
 hypothesis = "daemon and CLI OCR jobs can close the remaining background-producer race by capturing one persisted source-occurrence/root/epoch fence at claim time and validating that same fence before every page-cache write and final OCR publication"
 expected_delta = "each OCR attempt is durably bound to the exact job attempt, document, source revision and triage identity, present source occurrence, canonical root/path and bounded root epoch; stale or deleting claims write no private OCR cache or publication facts, while shared-document supersession performs one deterministic bounded rebind without consuming failure budget"
-negative_control = "caller-supplied root or epoch, missing/mismatched/stale fence, active or unknown deletion receipt, invalid integer storage, stable-path root scans, unbound daemon or CLI OCR writes, late-only guards, fallback, second phase/epoch owner, active path 38, more than 3,400 gross lines, auto-merge or gate weakening must fail closed"
+negative_control = "caller-supplied root or epoch, missing/mismatched/stale fence, active or unknown deletion receipt, invalid integer storage, stable-path root scans, rootless unmanaged direct import or daemon fixture, unbound daemon or CLI OCR writes, late-only guards, fallback, second phase/epoch owner, active path 45, more than 3,400 gross lines, auto-merge or gate weakening must fail closed"
 implementation_boundary = "strict schema-v39 COW migration plus one private meta-store OCR claim-fence owner reused by daemon and CLI; filesystem OCR and invisible artifact staging stay outside SQLite locks, the existing publication lease/head CAS remains authoritative, and runtime activation remains post-commit; do not add generic queues, outbox, UI/IPC or deletion phase recovery"
 resident_pool_workload = "not applicable; deterministic in-memory metadata-store tests own this correctness slice"
 resident_pool_acceptance = "not applicable; deterministic OCR claim/cache/publication transaction tests plus affected-crate regression own this correctness slice"
 full_product_acceptance = "real configured import creates OCR work, claim captures a persisted fence, sibling deletion makes cache/publication fail closed with zero corresponding private write, daemon and CLI share the same authority, shared-root rebind is bounded, COW/reopen recovery is strict, and stale post-DB publication runtime activation cannot win"
 raw_profile_boundary = "no private path, filename, resume text, raw query, candidate result, token, PID, log, trace, database, index, model or cache bytes may enter tests, screenshots, git or GitHub"
-rollback_condition = "stop or forward-correct if an OCR claim can write cache/publication data without its persisted fence, caller identity can authorize it, purge leaves a fence orphan, shared-root settlement scans the stable path or consumes failure budget, staged runtime activation can beat a stale lease, a second authority appears, gross exceeds 3,400 lines or active path 38 is required"
+rollback_condition = "stop or forward-correct if an OCR claim can write cache/publication data without its persisted fence, caller identity can authorize it, unmanaged direct import or a daemon fixture can persist task/private rows without a source-root snapshot binding, purge leaves a fence orphan, shared-root settlement scans the stable path or consumes failure budget, staged runtime activation can beat a stale lease, a second authority appears, gross exceeds 3,400 lines or active path 45 is required"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",

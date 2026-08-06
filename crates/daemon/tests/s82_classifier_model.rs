@@ -2,7 +2,10 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use import_pipeline::{current_import_processing_contract, ImportOptions, LinearPromotionPolicy};
+use import_pipeline::{
+    current_import_processing_contract, ImportOptions, LinearPromotionPolicy,
+    SearchPublicationVectorization,
+};
 use meta_store::{
     DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportRootKind, ImportScanProfile,
     ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, ReadMetaStore, UnixTimestamp,
@@ -106,12 +109,13 @@ fn seed_queued_import_task(data_dir: &Path, canonical_root: &Path, model: &Path)
         ..ImportOptions::default()
     })
     .unwrap();
-    store
-        .activate_migration_rebuild_contract(&processing_contract, now)
-        .unwrap();
-    store
-        .insert_import_task_with_scan_scope(&task, &scope, &processing_contract)
-        .unwrap();
+    support::insert_import_task_with_scope_for_contract(
+        &store,
+        &task,
+        &scope,
+        &processing_contract,
+        &SearchPublicationVectorization::default(),
+    );
 }
 
 fn temp_dir(label: &str) -> std::path::PathBuf {

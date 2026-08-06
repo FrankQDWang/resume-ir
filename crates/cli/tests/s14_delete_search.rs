@@ -6,9 +6,10 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    BeginScanOutcome, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, DocumentId,
-    ImportTaskId, OcrPageCacheEntry, OcrPageCacheKey, OcrWordBox, OwnedMetaStore, ReadMetaStore,
-    ScanTrigger, UnixTimestamp,
+    BeginScanOutcome, ClassificationStatus, CurrentClassifierEpoch, DataDirectoryOwnerAcquisition,
+    DataDirectoryOwnerLease, DocumentId, DocumentStatus, ImportTaskId, OcrPageCacheEntry,
+    OcrPageCacheKey, OcrWordBox, OwnedMetaStore, ReadMetaStore, ReasonCode, ScanTrigger,
+    SourceRevisionTriage, UnixTimestamp,
 };
 
 #[test]
@@ -282,7 +283,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     let deleted_document_id = DocumentId::from_str(&deleted_doc_id).unwrap();
     let (ocr_cache_key, embedding_job_id) = {
         let store = create_owned_store(&data_dir);
-        let deleted_document = store
+        let mut deleted_document = store
             .document_by_id(&deleted_document_id)
             .unwrap()
             .expect("deleted candidate document before tombstone");
@@ -292,7 +293,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
             .into_iter()
             .next()
             .expect("deleted candidate version before tombstone");
-        let authority_at = UnixTimestamp::from_unix_seconds(1_800_013_999);
+        let authority_at = UnixTimestamp::from_unix_seconds(1_700_013_999);
         let canonical_root = fs::canonicalize(&fixture_root).unwrap();
         let canonical_root_path = path_str(&canonical_root);
         let root = store
@@ -344,7 +345,31 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
         )
         .unwrap();
         assert_eq!(ocr_cache_entry.word_boxes().len(), 1);
-        store.upsert_ocr_page_cache_entry(&ocr_cache_entry).unwrap();
+        const OCR_FIXTURE_EPOCH: &str = "precision_first_v4_linear_aaaaaaaaaaaa";
+        deleted_document.status = DocumentStatus::OcrRequired;
+        store.upsert_document(&deleted_document).unwrap();
+        store
+            .insert_source_revision_triage(&SourceRevisionTriage {
+                source_revision_id: deleted_version.source_revision_id.clone(),
+                status: ClassificationStatus::OcrBacklog,
+                triage_epoch: OCR_FIXTURE_EPOCH.to_string(),
+                reason_codes: vec![ReasonCode::OcrRequired],
+                triaged_at: authority_at,
+            })
+            .unwrap();
+        store
+            .enqueue_ocr_job_for_source_triage(
+                &deleted_version.source_revision_id,
+                CurrentClassifierEpoch::parse(OCR_FIXTURE_EPOCH).unwrap(),
+                authority_at,
+            )
+            .unwrap();
+        let claimed = store.claim_next_ocr_job(authority_at).unwrap().unwrap();
+        assert!(store
+            .upsert_ocr_page_cache_entry(&claimed, &ocr_cache_entry)
+            .unwrap());
+        deleted_document.status = DocumentStatus::Searchable;
+        store.upsert_document(&deleted_document).unwrap();
         assert_eq!(
             store.ocr_page_cache_entry(&ocr_cache_key).unwrap(),
             Some(ocr_cache_entry)
@@ -393,7 +418,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     assert!(stdout.contains("purged documents: 1"));
     assert!(stdout.contains("index rebuilt: true"));
     assert!(stdout.contains("vector documents purged: 1"));
-    assert!(stdout.contains("ingest jobs purged: 1"));
+    assert!(stdout.contains("ingest jobs purged: 2"));
     assert!(stdout.contains("embedding job specs purged: 1"));
     assert!(stdout.contains("ocr cache entries purged: 1"));
     assert!(stdout.contains("ocr word boxes purged: 1"));

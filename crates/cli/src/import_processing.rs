@@ -6,9 +6,8 @@ use import_pipeline::{
     ImportProcessingOrphanNormalizationError, SearchPublicationVectorization,
 };
 use meta_store::{
-    ImportProcessingContract, ImportRootTaskHeadOutcome, ImportRootTaskHeadRequest,
-    ImportScanScope, ImportTask, ImportTaskPurpose, MigrationRebuildContractActivation,
-    OwnedMetaStore, SearchProjectionServiceState, SearchRepairReason, UnixTimestamp,
+    ImportProcessingContract, ImportTask, MigrationRebuildContractActivation, OwnedMetaStore,
+    SearchProjectionServiceState, SearchRepairReason, UnixTimestamp,
 };
 
 use super::{CliError, Result};
@@ -165,33 +164,4 @@ pub(super) fn claim_task_for_local_execution(
         .claim_observed_import_task_for_worker(observed, now)
         .map_err(CliError::store)?
         .ok_or_else(|| CliError::user("import task is no longer claimable"))
-}
-
-pub(super) fn insert_new_configured_task_head(
-    store: &OwnedMetaStore,
-    task: &ImportTask,
-    scope: &ImportScanScope,
-    contract: &ImportProcessingContract,
-) -> Result<()> {
-    let outcome = store
-        .coordinate_import_root_task_head(ImportRootTaskHeadRequest::Configured {
-            task,
-            scope,
-            processing_contract: contract,
-        })
-        .map_err(CliError::store)?;
-    if matches!(
-        outcome,
-        ImportRootTaskHeadOutcome::HeadInserted {
-            task: persisted_task,
-            scope: persisted_scope,
-            purpose: ImportTaskPurpose::ConfiguredCatchUp,
-            ..
-        } if persisted_task.id == task.id && persisted_scope.import_task_id == task.id
-    ) {
-        return Ok(());
-    }
-    Err(CliError::user(
-        "configured import task head was not inserted",
-    ))
 }
