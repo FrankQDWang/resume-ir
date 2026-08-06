@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-443-to-446-source-root-revocation-epoch-foundation-2026-08-06",
-  "from_issue": "#443",
-  "to_issue": "#446",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/443#issuecomment-5199454461",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/446",
-  "base_active_goal_sha256": "de388fe83cd390f32b37a0e96ed2c05d889d5e6af8377fe340d7e7b950640c15",
+  "transition_id": "issue-446-to-451-source-root-bound-import-commit-2026-08-06",
+  "from_issue": "#446",
+  "to_issue": "#451",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/446#issuecomment-5200916723",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/451",
+  "base_active_goal_sha256": "26c3cc445d08d71b6d94b53c39548d853cdca2709a42e29e8ebfd9e789646e01",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
