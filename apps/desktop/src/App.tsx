@@ -572,7 +572,11 @@ export function App() {
           roots={managedRoots}
           busy={["selecting", "submitting"].includes(importState)}
           importAllowed={importAllowed}
-          keywordCapabilityState={authoritativeStatus?.capabilities.keyword_search.state ?? "unavailable"}
+          progressSignals={{
+            keywordCapabilityState: authoritativeStatus?.capabilities.keyword_search.state ?? "unavailable",
+            semanticCapabilityState: authoritativeStatus?.capabilities.semantic_search.state ?? "unavailable",
+            embeddingQueueDepth: authoritativeStatus?.embedding_queue_depth ?? null,
+          }}
           onAdd={() => void chooseImportRoot()}
           onScan={(root) => void requestRootScan(root)}
           onPause={(root) => void changeRootControl(root, "pause")}
