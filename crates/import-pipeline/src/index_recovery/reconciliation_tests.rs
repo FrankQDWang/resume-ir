@@ -447,7 +447,17 @@ fn unsafe_fulltext_root_blocks_the_exact_artifact_repair_without_worker_failure(
     )
     .unwrap();
     assert!(!next_tick.active_generation_rebuilt);
-    assert_eq!(store.search_projection_state().unwrap(), blocked);
+    let after = store.search_projection_state().unwrap();
+    assert_eq!(
+        after.service_state,
+        SearchProjectionServiceState::RepairBlocked
+    );
+    assert_eq!(
+        after.repair_reason,
+        Some(SearchRepairReason::RuntimeInvariant)
+    );
+    assert_eq!(after.generation, before.generation);
+    assert_eq!(after.visible_epoch, before.visible_epoch);
 }
 
 #[cfg(unix)]
@@ -491,7 +501,66 @@ fn offline_mutation_fails_closed_after_artifact_repair_blocks() {
     )
     .unwrap_err();
     assert_eq!(replay_error.class(), ImportPipelineErrorClass::Repairing);
-    assert_eq!(store.search_projection_state().unwrap(), blocked);
+    let after = store.search_projection_state().unwrap();
+    assert_eq!(
+        after.service_state,
+        SearchProjectionServiceState::RepairBlocked
+    );
+    assert_eq!(
+        after.repair_reason,
+        Some(SearchRepairReason::RuntimeInvariant)
+    );
+    assert_eq!(after.generation, before.generation);
+    assert_eq!(after.visible_epoch, before.visible_epoch);
+}
+
+#[test]
+fn generation_bearing_runtime_invariant_reopens_and_rebuilds_to_ready() {
+    let directory = tempdir().unwrap();
+    let data_dir = directory.path().join("data");
+    let store = ready_empty_store(&data_dir);
+    let before = store.search_projection_state().unwrap();
+    let generation = before.generation.as_deref().unwrap().to_string();
+    assert_eq!(
+        store
+            .begin_artifact_repair(
+                &generation,
+                before.visible_epoch,
+                UnixTimestamp::from_unix_seconds(1_700_000_010)
+            )
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Applied
+    );
+    let context = store.artifact_repair_context().unwrap().unwrap();
+    assert_eq!(
+        store
+            .block_artifact_repair(
+                &generation,
+                &context.publication_fingerprint,
+                before.visible_epoch,
+                UnixTimestamp::from_unix_seconds(1_700_000_011),
+            )
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Applied
+    );
+    assert_eq!(
+        store.search_projection_state().unwrap().service_state,
+        SearchProjectionServiceState::RepairBlocked
+    );
+
+    let summary = reconcile_search_artifacts(
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_000_012),
+        &SearchPublicationVectorization::default(),
+        &PipelineRunControl::default(),
+    )
+    .unwrap();
+    assert!(summary.active_generation_rebuilt);
+    let ready = store.search_projection_state().unwrap();
+    assert_eq!(ready.service_state, SearchProjectionServiceState::Ready);
+    assert_eq!(ready.repair_reason, None);
+    assert!(ready.generation.is_some());
+    assert!(ready.visible_epoch >= before.visible_epoch);
 }
 
 #[test]

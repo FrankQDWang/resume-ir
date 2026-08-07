@@ -1,28 +1,38 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "correctness_passed",
+  "workflow_state": "verification_active",
+  "experiment_state": "running",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "e05c20c4e797905768862069dfd623368558aa4e9253d308d15a7bece44fcb55",
+    "active_goal_sha256": "f787b9caeda6b6abaa1ea86f53d0dfbc5d62415b85ed07488d34211032f7471f",
     "acceptance_matrix_sha256": "9c3180bf8e7b2204cf01f60ad3f4a29619a5155d691ec395e03e04e4d2338f21",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "19eb3d58b0178de478b48b875c4a135fee79a983"
   },
-  "current_slice": "#460 Publishing/Purging/Verifying deletion crash-convergence",
+  "current_slice": "#464 generation-bearing runtime_invariant reopen",
   "hypothesis": {
-    "id": "issue-460-source-root-deletion-ppv-crash-convergence",
+    "id": "issue-464-generation-bearing-runtime-invariant-reopen",
     "acceptance_cell": "w0_docs",
-    "expected_effect": "Publishing, Purging and Verifying deletion crashes restart on the same receipt to Complete with machine-checkable zero private residue while preserving source files and sibling/shared isolation",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/460",
-    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/pull/462",
+    "expected_effect": "generation-bearing repair_blocked/runtime_invariant reopens into artifact repair and deletion Publishing stops unbounded publication_failed retries",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/464",
+    "after_measurement_ref": "pending",
     "reprofile_ref": "not_applicable_correctness_slice",
-    "decision": "accepted"
+    "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "slice_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-464-generation-bearing-runtime_invariant-reopen"
+    },
+    {
+      "from": "evidence_review",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/464"
+    },
     {
       "from": "verification_active",
       "to": "evidence_review",
@@ -3865,8 +3875,8 @@
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#460",
-    "active_prs": [],
+    "primary_issue": "#464",
+    "active_prs": ["#465"],
     "open_blockers": []
   }
 }

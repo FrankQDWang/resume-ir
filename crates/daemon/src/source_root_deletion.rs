@@ -9,8 +9,9 @@ use import_pipeline::{
     SearchProjectionRemoval, SearchProjectionRemovalReason, SearchPublicationVectorization,
 };
 use meta_store::{
-    ImportProcessingContract, OwnedMetaStore, SourceRootDeletion, SourceRootDeletionErrorCode,
-    SourceRootDeletionPhase, SourceRootId, SourceWatcherState,
+    ImportProcessingContract, OwnedMetaStore, SearchProjectionServiceState, SearchRepairReason,
+    SourceRootDeletion, SourceRootDeletionErrorCode, SourceRootDeletionPhase, SourceRootId,
+    SourceWatcherState,
 };
 
 use crate::command_failure::CommandFailure;
@@ -327,6 +328,7 @@ fn publish_root_removal(
     root_id: &SourceRootId,
     now: meta_store::UnixTimestamp,
 ) -> Result<(), DeletionAttemptFailure> {
+    ensure_search_head_ready_for_privacy_publication(store, now)?;
     let documents = store
         .source_root_deletion_document_ids(root_id)
         .map_err(|_| {
@@ -357,6 +359,56 @@ fn publish_root_removal(
             DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::PublicationFailed)
         })?;
     Ok(())
+}
+
+fn ensure_search_head_ready_for_privacy_publication(
+    store: &OwnedMetaStore,
+    now: meta_store::UnixTimestamp,
+) -> Result<(), DeletionAttemptFailure> {
+    let state = store
+        .search_projection_state()
+        .map_err(|_| DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal))?;
+    match (
+        state.service_state,
+        state.repair_reason,
+        state.generation.as_deref(),
+    ) {
+        (SearchProjectionServiceState::Ready, None, Some(_)) => Ok(()),
+        (
+            SearchProjectionServiceState::RepairBlocked,
+            Some(SearchRepairReason::RuntimeInvariant),
+            Some(generation),
+        ) => {
+            let _ = store
+                .reopen_runtime_invariant_for_artifact_repair(generation, state.visible_epoch, now)
+                .map_err(|_| {
+                    DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal)
+                })?;
+            Err(DeletionAttemptFailure::unavailable(
+                SourceRootDeletionErrorCode::Internal,
+                "search artifacts are recovering",
+            ))
+        }
+        (
+            SearchProjectionServiceState::Repairing,
+            Some(SearchRepairReason::ArtifactUnavailable | SearchRepairReason::MigrationRebuild),
+            _,
+        ) => Err(DeletionAttemptFailure::unavailable(
+            SourceRootDeletionErrorCode::Internal,
+            "search artifacts are recovering",
+        )),
+        (
+            SearchProjectionServiceState::RepairBlocked,
+            Some(SearchRepairReason::SourceUnavailable),
+            _,
+        ) => Err(DeletionAttemptFailure::unavailable(
+            SourceRootDeletionErrorCode::Internal,
+            "search source is unavailable",
+        )),
+        _ => Err(DeletionAttemptFailure::internal(
+            SourceRootDeletionErrorCode::PublicationFailed,
+        )),
+    }
 }
 
 fn purge_root_data(
@@ -478,13 +530,19 @@ mod tests {
     use std::fs;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use meta_store::{
-        DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, SourceRootDeletionErrorCode,
-        SourceRootDeletionPhase, UnixTimestamp,
+    use import_pipeline::{
+        finalize_migration_rebuild, PipelineRunControl, SearchPublicationVectorization,
     };
+    use meta_store::{
+        DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportProcessingContract,
+        SearchProjectionServiceState, SearchProjectionTransitionOutcome, SearchRepairReason,
+        SourceRootDeletionErrorCode, SourceRootDeletionPhase, UnixTimestamp, CLASSIFIER_EPOCH,
+    };
+    use tempfile::tempdir;
 
     use super::{
-        drive_worker_until_complete, resume_pending, DeletionAttemptFailure, WorkerRegistration,
+        drive_worker_until_complete, ensure_search_head_ready_for_privacy_publication,
+        resume_pending, DeletionAttemptFailure, WorkerRegistration,
     };
     use crate::command_failure::CommandFailure;
 
@@ -579,5 +637,82 @@ mod tests {
         drop(store);
         drop(owner);
         fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn blocked_runtime_invariant_head_waits_for_recovery_instead_of_publication_failed() {
+        let directory = tempdir().unwrap();
+        let data_dir = directory.path().join("data");
+        let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => panic!("test data directory contended"),
+        };
+        let store = owner.open_store().unwrap();
+        store.run_migrations().unwrap();
+        let contract = ImportProcessingContract::new(
+            "deletion-recovery-parser-v1",
+            "deletion-recovery-ocr-v1",
+            "deletion-recovery-schema-v29",
+            CLASSIFIER_EPOCH,
+        )
+        .unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_900_000);
+        store
+            .activate_migration_rebuild_contract(&contract, now)
+            .unwrap();
+        finalize_migration_rebuild(
+            &store,
+            now,
+            &contract,
+            &SearchPublicationVectorization::default(),
+            &PipelineRunControl::default(),
+        )
+        .unwrap();
+        let ready = store.search_projection_state().unwrap();
+        let generation = ready.generation.as_deref().unwrap().to_string();
+        assert_eq!(
+            store
+                .begin_artifact_repair(&generation, ready.visible_epoch, now)
+                .unwrap(),
+            SearchProjectionTransitionOutcome::Applied
+        );
+        let context = store.artifact_repair_context().unwrap().unwrap();
+        assert_eq!(
+            store
+                .block_artifact_repair(
+                    &generation,
+                    &context.publication_fingerprint,
+                    ready.visible_epoch,
+                    UnixTimestamp::from_unix_seconds(1_700_900_001),
+                )
+                .unwrap(),
+            SearchProjectionTransitionOutcome::Applied
+        );
+
+        let failure = ensure_search_head_ready_for_privacy_publication(
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_900_002),
+        )
+        .expect_err("blocked head must wait for artifact recovery");
+        assert_eq!(failure.code, SourceRootDeletionErrorCode::Internal);
+        assert!(matches!(
+            failure.transport,
+            CommandFailure::ServiceUnavailable("search artifacts are recovering")
+        ));
+        assert_ne!(
+            failure.code,
+            SourceRootDeletionErrorCode::PublicationFailed,
+            "recovery wait must not be recorded as publication_failed"
+        );
+        let repairing = store.search_projection_state().unwrap();
+        assert_eq!(
+            repairing.service_state,
+            SearchProjectionServiceState::Repairing
+        );
+        assert_eq!(
+            repairing.repair_reason,
+            Some(SearchRepairReason::ArtifactUnavailable)
+        );
+        assert_eq!(repairing.generation.as_deref(), Some(generation.as_str()));
     }
 }

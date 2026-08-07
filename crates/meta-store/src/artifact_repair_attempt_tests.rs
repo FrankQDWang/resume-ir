@@ -553,6 +553,140 @@ fn artifact_repair_refuses_a_tampered_current_publication_fingerprint() {
     assert_eq!(store.artifact_repair_context().unwrap(), None);
 }
 
+#[test]
+fn generation_bearing_runtime_invariant_reopens_into_artifact_unavailable() {
+    let (_directory, _owner, store) = ready_file_store();
+    let ready = store.search_projection_state().unwrap();
+    let generation = ready.generation.as_deref().unwrap().to_string();
+    let visible_epoch = ready.visible_epoch;
+    assert_eq!(
+        store
+            .begin_artifact_repair(&generation, visible_epoch, timestamp(600))
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Applied
+    );
+    let context = store.artifact_repair_context().unwrap().unwrap();
+    assert_eq!(
+        store
+            .block_artifact_repair(
+                &generation,
+                &context.publication_fingerprint,
+                visible_epoch,
+                timestamp(601),
+            )
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Applied
+    );
+    let blocked = store.search_projection_state().unwrap();
+    assert_eq!(
+        blocked.service_state,
+        SearchProjectionServiceState::RepairBlocked
+    );
+    assert_eq!(
+        blocked.repair_reason,
+        Some(SearchRepairReason::RuntimeInvariant)
+    );
+    assert_eq!(blocked.generation.as_deref(), Some(generation.as_str()));
+    assert_eq!(blocked.visible_epoch, visible_epoch);
+
+    assert_eq!(
+        store
+            .reopen_runtime_invariant_for_artifact_repair(
+                &generation,
+                visible_epoch,
+                timestamp(602),
+            )
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Applied
+    );
+    let repairing = store.search_projection_state().unwrap();
+    assert_eq!(
+        repairing.service_state,
+        SearchProjectionServiceState::Repairing
+    );
+    assert_eq!(
+        repairing.repair_reason,
+        Some(SearchRepairReason::ArtifactUnavailable)
+    );
+    assert_eq!(repairing.generation.as_deref(), Some(generation.as_str()));
+    assert_eq!(repairing.visible_epoch, visible_epoch);
+    let reopened_context = store.artifact_repair_context().unwrap().unwrap();
+    assert_eq!(reopened_context.generation, generation);
+    assert_eq!(reopened_context.visible_epoch, visible_epoch);
+    assert_eq!(store.artifact_repair_attempt_state().unwrap(), None);
+    assert_eq!(
+        store
+            .reopen_runtime_invariant_for_artifact_repair(
+                &generation,
+                visible_epoch,
+                timestamp(603),
+            )
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Applied
+    );
+}
+
+#[test]
+fn runtime_invariant_reopen_rejects_ready_and_mismatched_generation() {
+    let (_directory, _owner, store) = ready_file_store();
+    let ready = store.search_projection_state().unwrap();
+    let generation = ready.generation.as_deref().unwrap().to_string();
+    let visible_epoch = ready.visible_epoch;
+    assert_eq!(
+        store
+            .reopen_runtime_invariant_for_artifact_repair(
+                &generation,
+                visible_epoch,
+                timestamp(700),
+            )
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Superseded
+    );
+    assert_eq!(
+        store.search_projection_state().unwrap().service_state,
+        SearchProjectionServiceState::Ready
+    );
+
+    assert_eq!(
+        store
+            .begin_artifact_repair(&generation, visible_epoch, timestamp(701))
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Applied
+    );
+    let context = store.artifact_repair_context().unwrap().unwrap();
+    assert_eq!(
+        store
+            .block_artifact_repair(
+                &generation,
+                &context.publication_fingerprint,
+                visible_epoch,
+                timestamp(702),
+            )
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Applied
+    );
+    assert_eq!(
+        store
+            .reopen_runtime_invariant_for_artifact_repair(
+                "mismatched-generation",
+                visible_epoch,
+                timestamp(703),
+            )
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Superseded
+    );
+    let blocked = store.search_projection_state().unwrap();
+    assert_eq!(
+        blocked.service_state,
+        SearchProjectionServiceState::RepairBlocked
+    );
+    assert_eq!(
+        blocked.repair_reason,
+        Some(SearchRepairReason::RuntimeInvariant)
+    );
+    assert_eq!(blocked.generation.as_deref(), Some(generation.as_str()));
+}
+
 fn ready_file_store() -> (TempDir, DataDirectoryOwnerLease, OwnedMetaStore) {
     let directory = tempdir().unwrap();
     let data_dir = directory.path().join("data");
