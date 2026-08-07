@@ -271,8 +271,12 @@ document/revision/version stage. An unpublished
 processing-contract hard cut when generation is null, the prior active contract
 is non-empty and different, and no task is running. That transaction invalidates
 only old task-derived state, preserves source identity and immutable rows, and
-returns to `repairing/migration_rebuild`. The same contract, source-unavailable
-state, ready/generation-bearing state and running tasks remain sticky.
+returns to `repairing/migration_rebuild`. A generation-bearing
+`repair_blocked/runtime_invariant` head may reopen only into
+`repairing/artifact_unavailable` under an exact generation/epoch CAS so the
+existing artifact rebuild path can converge; it must not restore Ready without
+rebuild. The same contract, source-unavailable state, ready state and running
+tasks remain sticky.
 
 The mutable `document` row remains source-processing state and is not a search
 hydration source. Every active projection seals the bounded query-visible

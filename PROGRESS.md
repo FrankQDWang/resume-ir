@@ -1,5 +1,33 @@
 # Progress
 
+## Issue #464 generation-bearing runtime_invariant reopen
+
+Issue #464 closes the sticky generation-bearing
+`repair_blocked/runtime_invariant` deadlock that left daemon core blocked and
+source-root deletion Publishing retrying `publication_failed` forever after
+upgrade-with-retained-data.
+
+Production changes:
+
+1. `OwnedMetaStore::reopen_runtime_invariant_for_artifact_repair` exact CAS from
+   generation-bearing `repair_blocked/runtime_invariant` into
+   `repairing/artifact_unavailable` (generation/epoch preserved; attempt ledger
+   cleared for a fresh rebuild).
+2. Search-artifact reconcile reopens that blocked head before the existing
+   artifact rebuild path.
+3. Source-root deletion Publishing waits for Ready (or recovery) instead of
+   mapping blocked-head `store_invariant` into unbounded `publication_failed`.
+
+Focused verification:
+
+- `cargo test -p meta-store --locked runtime_invariant_reopen`
+- `cargo test -p import-pipeline --locked generation_bearing_runtime_invariant_reopens`
+- `cargo test -p resume-daemon --locked blocked_runtime_invariant_head_waits`
+- unsafe-layout reconcile still re-blocks after reopen attempts
+
+This slice does not change schema/IPC, does not reopen `source_unavailable`,
+and does not hard-cut generation-bearing heads back to Ready without rebuild.
+
 ## Issue #460 Publishing/Purging/Verifying deletion crash-convergence
 
 Issue #460 closes the remaining post-Quiescing deletion privacy gap under the

@@ -122,9 +122,36 @@ fn reconcile_search_artifacts_with_validation(
         interrupted_publications_abandoned: replayed,
         ..SearchArtifactRecoverySummary::default()
     };
-    let state = store
+    let mut state = store
         .search_projection_state()
         .map_err(ImportPipelineError::store)?;
+    if state.service_state == SearchProjectionServiceState::RepairBlocked
+        && state.repair_reason == Some(SearchRepairReason::RuntimeInvariant)
+    {
+        if let Some(generation) = state.generation.clone() {
+            match store
+                .reopen_runtime_invariant_for_artifact_repair(
+                    &generation,
+                    state.visible_epoch,
+                    now,
+                )
+                .map_err(ImportPipelineError::store)?
+            {
+                SearchProjectionTransitionOutcome::Applied => {
+                    state = store
+                        .search_projection_state()
+                        .map_err(ImportPipelineError::store)?;
+                }
+                SearchProjectionTransitionOutcome::Superseded => {
+                    return defer_reconciliation(
+                        mode,
+                        summary,
+                        ReconciliationDeferral::RepairBlocked,
+                    );
+                }
+            }
+        }
+    }
     if state.service_state == SearchProjectionServiceState::RepairBlocked {
         return defer_reconciliation(mode, summary, ReconciliationDeferral::RepairBlocked);
     }

@@ -254,6 +254,237 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         })
     }
 
+    /// Reopens only a generation-bearing `repair_blocked/runtime_invariant`
+    /// head into `repairing/artifact_unavailable` so the existing artifact
+    /// rebuild path can converge. This never restores Ready without rebuild,
+    /// never reopens `source_unavailable`, and never clears a null generation.
+    pub fn reopen_runtime_invariant_for_artifact_repair(
+        &self,
+        expected_generation: &str,
+        expected_visible_epoch: u64,
+        now: UnixTimestamp,
+    ) -> Result<SearchProjectionTransitionOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(MetaStoreError::storage)?;
+        let expected_epoch = u64_to_i64(
+            expected_visible_epoch,
+            "search_projection_state.visible_epoch",
+        )?;
+        let already_repairing = transaction
+            .query_row(
+                "SELECT EXISTS (
+                     SELECT 1 FROM search_projection_state
+                     WHERE state_key = 'default'
+                       AND service_state = 'repairing'
+                       AND repair_reason = 'artifact_unavailable'
+                       AND generation = ?1
+                       AND visible_epoch = ?2
+                 )",
+                params![expected_generation, expected_epoch],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?
+            == 1;
+        if already_repairing {
+            let exact_context = transaction
+                .query_row(
+                    "SELECT EXISTS (
+                         SELECT 1 FROM artifact_repair_context
+                         WHERE state_key = 'default' AND generation = ?1
+                           AND visible_epoch = ?2
+                     )",
+                    params![expected_generation, expected_epoch],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(MetaStoreError::storage)?
+                == 1;
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(if exact_context {
+                SearchProjectionTransitionOutcome::Applied
+            } else {
+                SearchProjectionTransitionOutcome::Superseded
+            });
+        }
+        let exact_blocked = transaction
+            .query_row(
+                "SELECT EXISTS (
+                     SELECT 1 FROM search_projection_state
+                     WHERE state_key = 'default'
+                       AND service_state = 'repair_blocked'
+                       AND repair_reason = 'runtime_invariant'
+                       AND generation = ?1
+                       AND visible_epoch = ?2
+                 )",
+                params![expected_generation, expected_epoch],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?
+            == 1;
+        if !exact_blocked {
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(SearchProjectionTransitionOutcome::Superseded);
+        }
+        transaction
+            .execute(
+                "INSERT INTO artifact_repair_context (
+                    state_key, generation, publication_fingerprint, visible_epoch,
+                    classifier_epoch, projection_digest, projection_count,
+                    vector_mode, vector_model_id, vector_dimension,
+                    created_at_seconds, updated_at_seconds
+                 )
+                 SELECT 'default', publication.generation,
+                        publication.publication_fingerprint, head.visible_epoch,
+                        publication.classifier_epoch, publication.projection_digest,
+                        publication.fulltext_document_count, publication.vector_mode,
+                        publication.vector_model_id, publication.vector_dimension, ?1, ?1
+                 FROM search_projection_state AS head
+                 JOIN search_publication_journal AS publication
+                   ON publication.generation = head.generation
+                 WHERE head.state_key = 'default'
+                   AND head.service_state = 'repair_blocked'
+                   AND head.repair_reason = 'runtime_invariant'
+                   AND head.generation = ?2 AND head.visible_epoch = ?3
+                   AND publication.state = 'ready'
+                   AND publication.fulltext_manifest_schema = ?4
+                   AND publication.fulltext_index_schema = ?5
+                   AND publication.vector_manifest_schema = ?6
+                   AND publication.vector_index_schema = ?7
+                   AND publication.fulltext_document_count = publication.vector_projection_count
+                 ON CONFLICT(state_key) DO NOTHING",
+                params![
+                    now.as_unix_seconds(),
+                    expected_generation,
+                    expected_epoch,
+                    FULLTEXT_MANIFEST_SCHEMA_V3,
+                    FULLTEXT_INDEX_SCHEMA_V3,
+                    VECTOR_MANIFEST_SCHEMA_V4,
+                    VECTOR_INDEX_SCHEMA_V4,
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        let exact_context = transaction
+            .query_row(
+                "SELECT EXISTS (
+                     SELECT 1 FROM artifact_repair_context
+                     WHERE state_key = 'default' AND generation = ?1
+                       AND visible_epoch = ?2
+                 )",
+                params![expected_generation, expected_epoch],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?
+            == 1;
+        if !exact_context {
+            // A stale immutable context from another generation cannot be
+            // overwritten; clear only after the exact blocked head still owns it.
+            transaction
+                .execute(
+                    "DELETE FROM artifact_repair_context
+                     WHERE state_key = 'default'
+                       AND NOT (
+                           generation = ?1 AND visible_epoch = ?2
+                       )
+                       AND EXISTS (
+                           SELECT 1 FROM search_projection_state AS head
+                           WHERE head.state_key = 'default'
+                             AND head.service_state = 'repair_blocked'
+                             AND head.repair_reason = 'runtime_invariant'
+                             AND head.generation = ?1
+                             AND head.visible_epoch = ?2
+                       )",
+                    params![expected_generation, expected_epoch],
+                )
+                .map_err(MetaStoreError::storage)?;
+            transaction
+                .execute(
+                    "INSERT INTO artifact_repair_context (
+                        state_key, generation, publication_fingerprint, visible_epoch,
+                        classifier_epoch, projection_digest, projection_count,
+                        vector_mode, vector_model_id, vector_dimension,
+                        created_at_seconds, updated_at_seconds
+                     )
+                     SELECT 'default', publication.generation,
+                            publication.publication_fingerprint, head.visible_epoch,
+                            publication.classifier_epoch, publication.projection_digest,
+                            publication.fulltext_document_count, publication.vector_mode,
+                            publication.vector_model_id, publication.vector_dimension, ?1, ?1
+                     FROM search_projection_state AS head
+                     JOIN search_publication_journal AS publication
+                       ON publication.generation = head.generation
+                     WHERE head.state_key = 'default'
+                       AND head.service_state = 'repair_blocked'
+                       AND head.repair_reason = 'runtime_invariant'
+                       AND head.generation = ?2 AND head.visible_epoch = ?3
+                       AND publication.state = 'ready'
+                       AND publication.fulltext_manifest_schema = ?4
+                       AND publication.fulltext_index_schema = ?5
+                       AND publication.vector_manifest_schema = ?6
+                       AND publication.vector_index_schema = ?7
+                       AND publication.fulltext_document_count = publication.vector_projection_count
+                     ON CONFLICT(state_key) DO NOTHING",
+                    params![
+                        now.as_unix_seconds(),
+                        expected_generation,
+                        expected_epoch,
+                        FULLTEXT_MANIFEST_SCHEMA_V3,
+                        FULLTEXT_INDEX_SCHEMA_V3,
+                        VECTOR_MANIFEST_SCHEMA_V4,
+                        VECTOR_INDEX_SCHEMA_V4,
+                    ],
+                )
+                .map_err(MetaStoreError::storage)?;
+            let exact_context = transaction
+                .query_row(
+                    "SELECT EXISTS (
+                         SELECT 1 FROM artifact_repair_context
+                         WHERE state_key = 'default' AND generation = ?1
+                           AND visible_epoch = ?2
+                     )",
+                    params![expected_generation, expected_epoch],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(MetaStoreError::storage)?
+                == 1;
+            if !exact_context {
+                transaction.commit().map_err(MetaStoreError::storage)?;
+                return Ok(SearchProjectionTransitionOutcome::Superseded);
+            }
+        }
+        transaction
+            .execute(
+                "DELETE FROM artifact_repair_attempt
+                 WHERE state_key = 'default'
+                   AND generation = ?1
+                   AND visible_epoch = ?2",
+                params![expected_generation, expected_epoch],
+            )
+            .map_err(MetaStoreError::storage)?;
+        let changed = transaction
+            .execute(
+                "UPDATE search_projection_state
+                 SET service_state = 'repairing', repair_reason = 'artifact_unavailable',
+                     updated_at_seconds = MAX(updated_at_seconds, ?1)
+                 WHERE state_key = 'default'
+                   AND service_state = 'repair_blocked'
+                   AND repair_reason = 'runtime_invariant'
+                   AND generation = ?2
+                   AND visible_epoch = ?3",
+                params![now.as_unix_seconds(), expected_generation, expected_epoch],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(if changed == 1 {
+            SearchProjectionTransitionOutcome::Applied
+        } else {
+            SearchProjectionTransitionOutcome::Superseded
+        })
+    }
+
     /// Blocks only the exact published artifact repair attempt observed by
     /// the caller. The immutable generation and visible epoch are preserved so
     /// a stale worker can never overwrite a newer ready head.
