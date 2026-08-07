@@ -22,6 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
+scope_exception_reason = "standard correctness slice for #464; no scope-exception budget expansion"
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -35,6 +36,8 @@ allowed_paths = [
   "crates/daemon/src/source_root_deletion.rs",
   "crates/daemon/tests/s20_ipc.rs",
   "perf/current-loop-state.json",
+  "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+  "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
 ]
 allowed_paths_role = "generation_bearing_runtime_invariant_reopen_owner"
 primary_benchmark_lane = "full_import_ocr_backlog"

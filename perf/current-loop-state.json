@@ -5,7 +5,7 @@
   "experiment_state": "running",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "ec63a81f7cd618a1a7eeb872fbecaf2e07f0e984b0e80b23913b10bf20ea75ab",
+    "active_goal_sha256": "f787b9caeda6b6abaa1ea86f53d0dfbc5d62415b85ed07488d34211032f7471f",
     "acceptance_matrix_sha256": "9c3180bf8e7b2204cf01f60ad3f4a29619a5155d691ec395e03e04e4d2338f21",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
@@ -3875,8 +3875,8 @@
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#460",
-    "active_prs": [],
+    "primary_issue": "#464",
+    "active_prs": ["#465"],
     "open_blockers": []
   }
 }
