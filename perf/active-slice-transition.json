@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-451-to-454-source-root-bound-ocr-claim-publication-2026-08-06",
-  "from_issue": "#451",
-  "to_issue": "#454",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/451#issuecomment-5201673623",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/454",
-  "base_active_goal_sha256": "3bcb559d61422d0fe6e9273b0db46f713798c97dbd80a723ccff1eb76e4fc0ba",
+  "transition_id": "issue-454-to-460-source-root-deletion-ppv-crash-convergence-2026-08-07",
+  "from_issue": "#454",
+  "to_issue": "#460",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/454#issuecomment-5210912250",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/460",
+  "base_active_goal_sha256": "7fb5aac95081089e2f6b31e89b48d36dcce5bea6a4cc2622890a4766f33b185c",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
