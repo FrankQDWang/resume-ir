@@ -7,8 +7,10 @@ background-producer deletion race. Each running OCR attempt owns one private
 `ocr_claim_source_fence` row bound to the exact ingest job attempt, document,
 source revision and triage identity, present source occurrence, canonical root/path,
 and bounded root revocation epoch. Claim selection is deterministic and examines at
-most 257 candidates; a valid attempt is never authorized by caller-supplied root or
-epoch data.
+most two ordered batches of 256 eligible OCR jobs per call; wholly unclaimable
+batches settle without consuming attempt budget, and queues larger than 512 invalid
+jobs continue across later calls. A valid attempt is never authorized by
+caller-supplied root or epoch data.
 
 The daemon and CLI now use the same claim authority. Every OCR page-cache write and
 the final OCR facts/search publication revalidate the persisted fence inside their
@@ -39,9 +41,17 @@ post-commit runtime activation, fresh direct-import binding and retry. Verificat
 passes all 187 meta-store tests, all 150 import-pipeline tests (one existing ignored),
 CLI deletion 9/9 and OCR handoff 16/16, plus the focused daemon activation test. The
 claim row is fixed-size; stable claim/cache/publication work uses indexed point reads
-and writes, while the bounded shared-occurrence selection is capped at 257 rows. No
-corpus scan or durable resource growth beyond one current fence per claimed OCR job is
-introduced.
+and writes, while each selected job resolves one deterministic present occurrence
+through indexed point lookups rather than a root/corpus scan. No corpus scan or
+durable resource growth beyond one current fence per claimed OCR job is introduced.
+
+Independent post-merge FINAL REVIEW of the #454 train, including starvation
+corrective PR #458 on origin/main at
+`4e28f3d0b029d59de0db9ea67e713fbdfbb24670`, passed with no production defect.
+Reviewed tree `999375159135a6460edf89c9fac35e95fd509671` matches the exact four-path
+311+/10- corrective; focused meta-store, s3_sqlite, fmt, Clippy, and governance/
+privacy gates passed. Known baseline-blocked native s4/s50/s81/s82 configuration
+and the old s807 rootless fixture remain out of this closeout.
 
 ## Issue #451 atomic source-root-bound import commit
 
