@@ -16,6 +16,15 @@ Purging and Verifying seeds on the same receipt to Complete without deleting
 source files. No schema, IPC/UI, outbox, second authority, or Quiescing/OCR-fence
 reopen was introduced.
 
+Independent post-merge FINAL REVIEW of #460 / PR #462 on origin/main at
+`19eb3d58b0178de478b48b875c4a135fee79a983` passed with no production defect.
+Reviewed tree `62760ff34fd28b4a12fff399eaf3032a45554e26` matches the exact eight-path
+401+/7- squash; focused meta-store source_root_deletion 8/8, daemon deletion 3/3,
+s20 recovery 1/1, fmt, Clippy `-D warnings`, performance contracts, and public
+guard passed. Known baseline-blocked native s4/s50/s81/s82 configuration and the
+old s807 rootless fixture remain out of this closeout and must be re-evaluated
+only with fresh evidence before macOS zero-residue E2E.
+
 ## Issue #454 root-bound OCR claim and publication
 
 Issue #454 advances metadata to schema v39 and closes the remaining reachable
