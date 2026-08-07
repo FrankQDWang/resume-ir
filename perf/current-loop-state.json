@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_active",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "verification_active",
+  "experiment_state": "optimization_slice_active",
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "e05c20c4e797905768862069dfd623368558aa4e9253d308d15a7bece44fcb55",
@@ -23,6 +23,11 @@
     "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "slice_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-460-publishingpurgingverifying-deletion-crash-convergence"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",

@@ -595,6 +595,8 @@ fn completion_residual_owner_reads_one_typed_row_and_preserves_failed_completion
         import_tasks: 1,
         authorized_import_roots: 1,
         documents: 1,
+        active_search_projections: 0,
+        ocr_page_cache: 0,
         total: 6,
     };
     assert_eq!(
@@ -667,6 +669,295 @@ fn completion_residual_owner_reads_one_typed_row_and_preserves_failed_completion
     let completed = store.complete_source_root_deletion(&root.id, now).unwrap();
     assert_eq!(completed.phase, SourceRootDeletionPhase::Complete);
     assert!(store.source_root(&root.id).unwrap().is_none());
+}
+
+#[test]
+fn completion_residual_counts_unreferenced_ocr_page_cache_and_spares_shared_hash() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_800_300_100);
+    let doomed_root = register_scanned_root(
+        &store,
+        "/synthetic/ocr-residual-doomed",
+        "OCR residual doomed",
+        "ocr-residual-doomed-scan",
+        now,
+    );
+    let sibling_root = register_scanned_root(
+        &store,
+        "/synthetic/ocr-residual-sibling",
+        "OCR residual sibling",
+        "ocr-residual-sibling-scan",
+        now,
+    );
+    let (exclusive, exclusive_revision) = persist_synthetic_document(&store, "ocr-exclusive", now);
+    observe(
+        &store,
+        &doomed_root.id,
+        &exclusive,
+        &exclusive_revision,
+        "ocr-residual-doomed-scan",
+        now,
+    );
+
+    // Distinct documents with identical content bytes: doomed snapshot owns one;
+    // sibling retains the other so OCR for that hash must be spared.
+    let shared_bytes = b"synthetic shared ocr residual bytes";
+    let mut doomed_shared = Document {
+        id: DocumentId::from_non_secret_parts(&["source-root-deletion", "ocr-shared-doomed"]),
+        source_uri: "synthetic://source-root-deletion/ocr-shared-doomed.pdf".to_string(),
+        normalized_path: "/synthetic/ocr-residual-doomed/shared.pdf".to_string(),
+        file_name: "shared.pdf".to_string(),
+        extension: FileExtension::Pdf,
+        byte_size: shared_bytes.len() as u64,
+        mtime: now,
+        content_hash: None,
+        text_hash: None,
+        is_deleted: false,
+        created_at: now,
+        updated_at: now,
+        status: DocumentStatus::FieldsExtracted,
+    };
+    let doomed_shared_revision = SourceRevision::for_content(
+        doomed_shared.id.clone(),
+        ContentDigest::from_bytes(shared_bytes),
+        shared_bytes.len() as u64,
+    );
+    doomed_shared.content_hash = Some(doomed_shared_revision.content_hash.as_str().to_string());
+    store.upsert_document(&doomed_shared).unwrap();
+    store
+        .insert_source_revision(&doomed_shared_revision)
+        .unwrap();
+    observe(
+        &store,
+        &doomed_root.id,
+        &doomed_shared,
+        &doomed_shared_revision,
+        "ocr-residual-doomed-scan",
+        now,
+    );
+
+    let mut sibling_shared = Document {
+        id: DocumentId::from_non_secret_parts(&["source-root-deletion", "ocr-shared-sibling"]),
+        source_uri: "synthetic://source-root-deletion/ocr-shared-sibling.pdf".to_string(),
+        normalized_path: "/synthetic/ocr-residual-sibling/shared.pdf".to_string(),
+        file_name: "shared.pdf".to_string(),
+        extension: FileExtension::Pdf,
+        byte_size: shared_bytes.len() as u64,
+        mtime: now,
+        content_hash: None,
+        text_hash: None,
+        is_deleted: false,
+        created_at: now,
+        updated_at: now,
+        status: DocumentStatus::FieldsExtracted,
+    };
+    let sibling_shared_revision = SourceRevision::for_content(
+        sibling_shared.id.clone(),
+        ContentDigest::from_bytes(shared_bytes),
+        shared_bytes.len() as u64,
+    );
+    sibling_shared.content_hash = Some(sibling_shared_revision.content_hash.as_str().to_string());
+    store.upsert_document(&sibling_shared).unwrap();
+    store
+        .insert_source_revision(&sibling_shared_revision)
+        .unwrap();
+    observe(
+        &store,
+        &sibling_root.id,
+        &sibling_shared,
+        &sibling_shared_revision,
+        "ocr-residual-sibling-scan",
+        now,
+    );
+
+    let exclusive_hash = exclusive.content_hash.clone().unwrap();
+    let shared_hash = doomed_shared.content_hash.clone().unwrap();
+    assert_eq!(shared_hash, sibling_shared.content_hash.clone().unwrap());
+    {
+        let connection = store.connection.borrow();
+        for hash in [&exclusive_hash, &shared_hash] {
+            connection
+                .execute(
+                    "INSERT INTO ocr_page_cache (
+                        file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile,
+                        text, confidence, engine_profile, duration_ms, status, error_kind,
+                        updated_at_seconds
+                     ) VALUES (?1, 1, 300, 'eng', 'balanced', 'synthetic', 0.9, 'fixture', 1,
+                               'succeeded', NULL, ?2)",
+                    params![hash, now.as_unix_seconds()],
+                )
+                .unwrap();
+        }
+    }
+
+    store
+        .begin_source_root_deletion(&doomed_root.id, now)
+        .unwrap();
+    for phase in [
+        SourceRootDeletionPhase::Quiescing,
+        SourceRootDeletionPhase::Publishing,
+        SourceRootDeletionPhase::Purging,
+    ] {
+        store
+            .set_source_root_deletion_phase(&doomed_root.id, phase, now)
+            .unwrap();
+    }
+    store.purge_source_root_data(&doomed_root.id, now).unwrap();
+
+    let residuals =
+        read_source_root_deletion_completion_residuals(&store.connection.borrow(), &doomed_root.id)
+            .unwrap();
+    assert_eq!(residuals.ocr_page_cache, 1);
+    assert_eq!(residuals.active_search_projections, 0);
+    assert!(residuals.total >= 1);
+    assert_eq!(
+        store
+            .complete_source_root_deletion(&doomed_root.id, now)
+            .unwrap_err()
+            .class(),
+        MetaStoreErrorClass::StorageInvariant
+    );
+
+    store
+        .purge_ocr_page_cache_by_content_hashes(&[exclusive_hash])
+        .unwrap();
+    assert_eq!(
+        store
+            .ocr_page_cache_entries_for_content_hashes(&[shared_hash.clone()])
+            .unwrap()
+            .len(),
+        1
+    );
+    loop {
+        let report = store
+            .purge_source_root_deleted_documents(&doomed_root.id)
+            .unwrap();
+        if report.remaining_tombstones == 0 {
+            break;
+        }
+    }
+    let residuals =
+        read_source_root_deletion_completion_residuals(&store.connection.borrow(), &doomed_root.id)
+            .unwrap();
+    assert_eq!(residuals.ocr_page_cache, 0);
+    assert_eq!(residuals.documents, 0);
+    assert!(residuals.is_empty());
+    let completed = store
+        .complete_source_root_deletion(&doomed_root.id, now)
+        .unwrap();
+    assert_eq!(completed.phase, SourceRootDeletionPhase::Complete);
+    assert_eq!(
+        store
+            .ocr_page_cache_entries_for_content_hashes(&[shared_hash])
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(store.document_by_id(&sibling_shared.id).unwrap().is_some());
+}
+
+#[test]
+fn completion_residual_counts_active_search_projection_for_snapshot_docs() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_800_300_200);
+    let root = register_scanned_root(
+        &store,
+        "/synthetic/projection-residual",
+        "Projection residual",
+        "projection-residual-scan",
+        now,
+    );
+    let (mut document, revision) = persist_synthetic_document(&store, "projection-residual", now);
+    document.status = DocumentStatus::Searchable;
+    document.updated_at = now;
+    store.upsert_document(&document).unwrap();
+    observe(
+        &store,
+        &root.id,
+        &document,
+        &revision,
+        "projection-residual-scan",
+        now,
+    );
+    let content_hash = document.content_hash.clone().unwrap();
+    let version_id = format!("sha256:{}", "a".repeat(64));
+    let generation = "projection-residual-gen";
+    {
+        let connection = store.connection.borrow();
+        connection
+            .execute(
+                "INSERT INTO resume_version (
+                    id, document_id, source_revision_id, normalized_text_hash,
+                    parse_version, schema_version, language_set_json, page_count,
+                    raw_text, clean_text, quality_score
+                 ) VALUES (?1, ?2, ?3, ?4, 'parser-v1', 'schema-v1', '[]', 1,
+                           'synthetic', 'synthetic', 0.9)",
+                params![
+                    version_id,
+                    document.id.as_str(),
+                    revision.id.as_str(),
+                    content_hash
+                ],
+            )
+            .unwrap();
+        // Residual proof only needs a stuck projection row for a snapshot document;
+        // bypass guarded-publication insert triggers that require a live commit CAS.
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys=OFF;
+                 DROP TRIGGER IF EXISTS active_projection_requires_validated_publication;
+                 DROP TRIGGER IF EXISTS active_search_projection_exact_version_metadata;",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO active_search_projection (
+                    document_id, resume_version_id, generation,
+                    source_uri, normalized_path, file_name, extension,
+                    byte_size, mtime_seconds, content_hash, text_hash,
+                    is_deleted, created_at_seconds, updated_at_seconds, status
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pdf', ?7, ?8, ?9, NULL,
+                           0, ?8, ?8, 'searchable')",
+                params![
+                    document.id.as_str(),
+                    version_id,
+                    generation,
+                    document.source_uri,
+                    document.normalized_path,
+                    document.file_name,
+                    document.byte_size as i64,
+                    now.as_unix_seconds(),
+                    content_hash
+                ],
+            )
+            .unwrap();
+    }
+
+    store.begin_source_root_deletion(&root.id, now).unwrap();
+    for phase in [
+        SourceRootDeletionPhase::Quiescing,
+        SourceRootDeletionPhase::Publishing,
+        SourceRootDeletionPhase::Purging,
+    ] {
+        store
+            .set_source_root_deletion_phase(&root.id, phase, now)
+            .unwrap();
+    }
+    store.purge_source_root_data(&root.id, now).unwrap();
+    let residuals =
+        read_source_root_deletion_completion_residuals(&store.connection.borrow(), &root.id)
+            .unwrap();
+    assert_eq!(residuals.active_search_projections, 1);
+    assert!(residuals.total >= 1);
+    assert_eq!(
+        store
+            .complete_source_root_deletion(&root.id, now)
+            .unwrap_err()
+            .class(),
+        MetaStoreErrorClass::StorageInvariant
+    );
 }
 
 #[test]

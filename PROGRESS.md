@@ -1,5 +1,21 @@
 # Progress
 
+## Issue #460 Publishing/Purging/Verifying deletion crash-convergence
+
+Issue #460 closes the remaining post-Quiescing deletion privacy gap under the
+existing single receipt. Completion residual proof now fail-closes on stuck
+`active_search_projection` rows for snapshot documents and on unreferenced
+`ocr_page_cache` rows for snapshot content hashes, while shared still-referenced
+hashes are spared. Verifying cleanup re-issues `PrivacyRevocation` before
+OCR-cache and tombstone purge so a Publishing crash or stuck projection
+converges without reopening Quiescing or weakening the projection gate.
+
+Focused meta-store residual witnesses cover projection fail-closed, exclusive
+OCR residual, and shared-hash sparing. Daemon startup recovery now also covers
+Purging and Verifying seeds on the same receipt to Complete without deleting
+source files. No schema, IPC/UI, outbox, second authority, or Quiescing/OCR-fence
+reopen was introduced.
+
 ## Issue #454 root-bound OCR claim and publication
 
 Issue #454 advances metadata to schema v39 and closes the remaining reachable
