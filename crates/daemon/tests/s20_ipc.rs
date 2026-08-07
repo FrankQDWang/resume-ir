@@ -486,6 +486,8 @@ fn startup_recovers_source_root_deletion_with_the_same_receipt() {
     for (fixture_name, seeded_phase) in [
         ("requested", None),
         ("publishing", Some(SourceRootDeletionPhase::Publishing)),
+        ("purging", Some(SourceRootDeletionPhase::Purging)),
+        ("verifying", Some(SourceRootDeletionPhase::Verifying)),
     ] {
         let data_dir = temp_dir(&format!("ipc-source-root-recovery-{fixture_name}-data"));
         seed_snapshot_state(&data_dir);
@@ -507,7 +509,17 @@ fn startup_recovers_source_root_deletion_with_the_same_receipt() {
                 .begin_source_root_deletion(&root.id, started_at)
                 .unwrap();
             if let Some(terminal_phase) = seeded_phase {
-                for phase in [SourceRootDeletionPhase::Quiescing, terminal_phase] {
+                let phases = [
+                    SourceRootDeletionPhase::Quiescing,
+                    SourceRootDeletionPhase::Publishing,
+                    SourceRootDeletionPhase::Purging,
+                    SourceRootDeletionPhase::Verifying,
+                ];
+                for phase in phases
+                    .into_iter()
+                    .take_while(|phase| *phase != terminal_phase)
+                    .chain(std::iter::once(terminal_phase))
+                {
                     store
                         .set_source_root_deletion_phase(&root.id, phase, started_at)
                         .unwrap();

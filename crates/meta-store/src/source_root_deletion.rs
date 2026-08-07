@@ -140,6 +140,8 @@ struct SourceRootDeletionCompletionResiduals {
     import_tasks: u64,
     authorized_import_roots: u64,
     documents: u64,
+    active_search_projections: u64,
+    ocr_page_cache: u64,
     total: u64,
 }
 
@@ -167,12 +169,40 @@ const SOURCE_ROOT_DELETION_COMPLETION_RESIDUALS_SQL: &str = r#"WITH residuals AS
             SELECT COUNT(*) FROM document
             WHERE id IN (
                 SELECT document_id FROM source_root_deletion_document WHERE root_id = ?1)
-        ) AS documents
+        ) AS documents,
+        (
+            SELECT COUNT(*) FROM active_search_projection AS projection
+            WHERE projection.document_id IN (
+                SELECT document_id FROM source_root_deletion_document WHERE root_id = ?1)
+        ) AS active_search_projections,
+        (
+            SELECT COUNT(*) FROM ocr_page_cache AS cache
+            WHERE cache.file_content_hash IN (
+                SELECT DISTINCT doomed.content_hash
+                FROM source_root_deletion_document AS doomed
+                WHERE doomed.root_id = ?1
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM source_revision AS retained_revision
+                    JOIN document AS retained
+                      ON retained.id = retained_revision.document_id
+                    WHERE retained_revision.document_id NOT IN (
+                        SELECT document_id FROM source_root_deletion_document
+                        WHERE root_id = ?1
+                    )
+                      AND retained.is_deleted = 0
+                      AND retained.status <> 'deleted'
+                      AND retained_revision.content_hash = doomed.content_hash
+                  )
+            )
+        ) AS ocr_page_cache
 )
 SELECT source_occurrences, scan_snapshots, pdf_reprocess_jobs,
        import_tasks, authorized_import_roots, documents,
+       active_search_projections, ocr_page_cache,
     source_occurrences + scan_snapshots + pdf_reprocess_jobs
-        + import_tasks + authorized_import_roots + documents AS total
+        + import_tasks + authorized_import_roots + documents
+        + active_search_projections + ocr_page_cache AS total
 FROM residuals"#;
 
 fn read_source_root_deletion_completion_residuals(
@@ -192,6 +222,8 @@ fn read_source_root_deletion_completion_residuals(
                     row.get::<_, i64>(4)?,
                     row.get::<_, i64>(5)?,
                     row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
                 ])
             },
         )
@@ -203,7 +235,9 @@ fn read_source_root_deletion_completion_residuals(
         import_tasks: to_u64(persisted[3])?,
         authorized_import_roots: to_u64(persisted[4])?,
         documents: to_u64(persisted[5])?,
-        total: to_u64(persisted[6])?,
+        active_search_projections: to_u64(persisted[6])?,
+        ocr_page_cache: to_u64(persisted[7])?,
+        total: to_u64(persisted[8])?,
     })
 }
 

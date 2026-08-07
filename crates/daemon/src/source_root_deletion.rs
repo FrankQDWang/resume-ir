@@ -309,7 +309,7 @@ fn resume(
             SourceRootDeletionErrorCode::Internal,
         ));
     }
-    finish_root_data_cleanup(store, root_id)?;
+    finish_root_data_cleanup(store, root_id, now)?;
     let receipt = store
         .complete_source_root_deletion(root_id, now)
         .map_err(|_| {
@@ -381,7 +381,12 @@ fn purge_root_data(
 fn finish_root_data_cleanup(
     store: &OwnedMetaStore,
     root_id: &SourceRootId,
+    now: meta_store::UnixTimestamp,
 ) -> Result<(), DeletionAttemptFailure> {
+    // Re-issue PrivacyRevocation before privacy purge so a Verifying restart after a
+    // Publishing crash (or a stuck active projection) converges without reopening
+    // Quiescing and without weakening the projection fail-closed gate.
+    publish_root_removal(store, root_id, now)?;
     let unreferenced_content_hashes = store
         .source_root_unreferenced_content_hashes(root_id)
         .map_err(|_| {
