@@ -380,11 +380,7 @@ fn ensure_search_head_ready_for_privacy_publication(
             Some(generation),
         ) => {
             let _ = store
-                .reopen_runtime_invariant_for_artifact_repair(
-                    generation,
-                    state.visible_epoch,
-                    now,
-                )
+                .reopen_runtime_invariant_for_artifact_repair(generation, state.visible_epoch, now)
                 .map_err(|_| {
                     DeletionAttemptFailure::internal(SourceRootDeletionErrorCode::Internal)
                 })?;

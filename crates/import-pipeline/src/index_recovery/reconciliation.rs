@@ -130,11 +130,7 @@ fn reconcile_search_artifacts_with_validation(
     {
         if let Some(generation) = state.generation.clone() {
             match store
-                .reopen_runtime_invariant_for_artifact_repair(
-                    &generation,
-                    state.visible_epoch,
-                    now,
-                )
+                .reopen_runtime_invariant_for_artifact_repair(&generation, state.visible_epoch, now)
                 .map_err(ImportPipelineError::store)?
             {
                 SearchProjectionTransitionOutcome::Applied => {

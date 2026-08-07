@@ -523,7 +523,11 @@ fn generation_bearing_runtime_invariant_reopens_and_rebuilds_to_ready() {
     let generation = before.generation.as_deref().unwrap().to_string();
     assert_eq!(
         store
-            .begin_artifact_repair(&generation, before.visible_epoch, UnixTimestamp::from_unix_seconds(1_700_000_010))
+            .begin_artifact_repair(
+                &generation,
+                before.visible_epoch,
+                UnixTimestamp::from_unix_seconds(1_700_000_010)
+            )
             .unwrap(),
         SearchProjectionTransitionOutcome::Applied
     );
