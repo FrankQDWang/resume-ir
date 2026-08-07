@@ -1,14 +1,20 @@
 import { FolderOpen, FolderTree, Pause, Play, RefreshCw, Trash2, X } from "lucide-react"
 import { useState } from "react"
 
-import type { CapabilityState, SourceRoot } from "./daemon"
-import { ImportProgress, importProgressPresentation } from "./import-progress"
+import type { SourceRoot } from "./daemon"
+import {
+  ImportProgress,
+  importProgressPresentation,
+  rootCardHeadingStatus,
+  useIndexPublishingHint,
+  type ImportProgressSignals,
+} from "./import-progress"
 
 interface SourceRootsPanelProps {
   roots: SourceRoot[]
   busy: boolean
   importAllowed: boolean
-  keywordCapabilityState: CapabilityState
+  progressSignals: ImportProgressSignals
   onAdd(): void
   onScan(root: SourceRoot): void
   onPause(root: SourceRoot): void
@@ -20,7 +26,7 @@ export function SourceRootsPanel({
   roots,
   busy,
   importAllowed,
-  keywordCapabilityState,
+  progressSignals,
   onAdd,
   onScan,
   onPause,
@@ -42,7 +48,7 @@ export function SourceRootsPanel({
         root={root}
         busy={busy}
         importAllowed={importAllowed}
-        keywordCapabilityState={keywordCapabilityState}
+        progressSignals={progressSignals}
         onScan={() => onScan(root)}
         onPause={() => onPause(root)}
         onResume={() => onResume(root)}
@@ -74,7 +80,7 @@ function SourceRootCard({
   root,
   busy,
   importAllowed,
-  keywordCapabilityState,
+  progressSignals,
   onScan,
   onPause,
   onResume,
@@ -83,7 +89,7 @@ function SourceRootCard({
   root: SourceRoot
   busy: boolean
   importAllowed: boolean
-  keywordCapabilityState: CapabilityState
+  progressSignals: ImportProgressSignals
   onScan(): void
   onPause(): void
   onResume(): void
@@ -91,14 +97,16 @@ function SourceRootCard({
 }) {
   const scan = root.last_scan
   const deleting = root.state === "deleting"
-  const presentation = importProgressPresentation(root, keywordCapabilityState)
+  const indexPublishingHint = useIndexPublishingHint(root, progressSignals)
+  const presentation = importProgressPresentation(root, { ...progressSignals, indexPublishingHint })
+  const headingStatus = rootCardHeadingStatus(root)
   return <article className="source-root-card">
     <div className="source-root-heading">
       <FolderTree size={22} />
-      <div className="source-copy"><strong>{root.display_label}</strong><p>{presentation.stageMessage} · {scan === null ? "首次扫描后启用自动监听与 5 分钟兜底" : "自动监听与每 5 分钟兜底扫描"}</p></div>
-      <span className={`source-state source-state-${deleting ? "deleting" : root.watcher_state === "unavailable" ? "offline" : root.watcher_state === "paused" ? "paused" : root.state}`}>{presentation.stageMessage}</span>
+      <div className="source-copy"><strong>{root.display_label}</strong><p>{headingStatus} · {scan === null ? "首次扫描后启用自动监听与 5 分钟兜底" : "自动监听与每 5 分钟兜底扫描"}</p></div>
+      <span className={`source-state source-state-${deleting ? "deleting" : root.watcher_state === "unavailable" ? "offline" : root.watcher_state === "paused" ? "paused" : root.state}`}>{headingStatus}</span>
     </div>
-    <ImportProgress root={root} keywordCapabilityState={keywordCapabilityState} />
+    <ImportProgress root={root} signals={{ ...progressSignals, indexPublishingHint }} />
     <dl className="source-counts">
       <Count label="已发现" value={root.current_counts.discovered} />
       <Count label="可搜索" value={root.current_counts.searchable} />
