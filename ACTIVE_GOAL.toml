@@ -1,6 +1,6 @@
 schema_version = "resume-ir.active-goal.v1"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-date = "2026-08-06"
+date = "2026-08-07"
 
 [authority]
 root_goal = "GOAL.md"
@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#454"
-name = "source_root_bound_ocr_claim_publication_v1"
+issue = "#460"
+name = "source_root_deletion_ppv_crash_convergence_v1"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
@@ -22,46 +22,22 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = true
-scope_exception_reason = "Issue #454 is a reviewer-approved vertical correctness exception: 44 active paths and at most 42 implementation paths add the strict schema-v39 OCR claim fence, migrate both daemon and CLI OCR workers, hard-cut unmanaged direct import onto the existing root-bound scan authority, retire its zero-caller rootless task-head helper, normalize every daemon integration fixture onto that same authority, and preserve the existing publication CAS as one atomic contract. Gross implementation change targets 2,200-2,800 lines and must stop above 3,400 or on active path 45. Scope-exception auto-merge remains forbidden."
+scope_exception_reason = "Issue #460 is a reviewer-approved vertical correctness exception: 20 active paths and at most 12 implementation paths make the existing Publishing/Purging/Verifying deletion pipeline crash-idempotent under one receipt authority. Gross implementation change targets 800-1,600 lines and must stop above 2,400 or on active path 21. Scope-exception auto-merge remains forbidden."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
   "03_next_goal_高性能本地检索GUI闭环/03_数据模型与存储协议.md",
   "03_next_goal_高性能本地检索GUI闭环/08_失败模式与恢复策略.md",
-  "crates/meta-store/src/active_store_manifest.rs",
-  "crates/meta-store/src/current_store.rs",
-  "crates/meta-store/src/current_store_initialization_receipt.rs",
-  "crates/meta-store/src/current_store_tests.rs",
-  "crates/meta-store/src/forward_migration.rs",
-  "crates/meta-store/src/forward_migration_receipt.rs",
-  "crates/meta-store/src/forward_migration_tests.rs",
+  "crates/daemon/src/source_root_deletion.rs",
+  "crates/daemon/tests/s20_ipc.rs",
   "crates/meta-store/src/lib.rs",
-  "crates/meta-store/src/ocr_job_enqueue.rs",
-  "crates/meta-store/src/ocr_publication.rs",
-  "crates/meta-store/src/schema_v39.rs",
-  "crates/meta-store/src/source_root_commit_fence.rs",
-  "crates/meta-store/src/source_root_ocr_claim_fence.rs",
-  "crates/meta-store/src/search_publication/store.rs",
-  "crates/meta-store/tests/ocr_search_publication.rs",
-  "crates/meta-store/tests/s3_sqlite.rs",
+  "crates/meta-store/src/current_store.rs",
+  "crates/meta-store/src/source_root_deletion.rs",
+  "crates/meta-store/src/source_root_privacy.rs",
+  "crates/meta-store/src/source_root_deletion_tests.rs",
+  "crates/meta-store/tests/source_root_deletion.rs",
   "crates/import-pipeline/src/lib.rs",
-  "crates/import-pipeline/src/ocr_publication.rs",
-  "crates/import-pipeline/src/search_publication.rs",
-  "crates/import-pipeline/src/search_publication_ocr.rs",
-  "crates/import-pipeline/src/tests/ocr_publication_tests.rs",
-  "crates/daemon/src/daemon_contract_tests.rs",
-  "crates/daemon/src/ocr_worker.rs",
-  "crates/daemon/tests/s4_daemon.rs",
-  "crates/daemon/tests/s48_search_ipc.rs",
-  "crates/daemon/tests/support/mod.rs",
-  "crates/daemon/tests/s50_ocr_worker.rs",
-  "crates/daemon/tests/s81_daemon_kill.rs",
-  "crates/daemon/tests/s82_classifier_model.rs",
-  "crates/cli/src/import_processing.rs",
-  "crates/cli/src/import_source_scan.rs",
-  "crates/cli/src/main.rs",
-  "crates/cli/tests/s14_delete_search.rs",
-  "crates/cli/tests/s15_ocr_handoff.rs",
+  "crates/import-pipeline/src/publication_coordinator.rs",
   "perf/acceptance-matrix.toml",
   "scripts/ci/check-performance-contracts.py",
   "perf/current-loop-state.json",
@@ -69,20 +45,20 @@ allowed_paths = [
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
 ]
-allowed_paths_role = "single_source_root_bound_ocr_claim_publication_owner"
+allowed_paths_role = "single_source_root_deletion_ppv_crash_convergence_owner"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L0_source_root_bound_ocr_claim_publication"
+observation_stage = "L0_source_root_deletion_ppv_crash_convergence"
 optimization_layer = "L1"
 optimization_layer_selected = true
-hypothesis = "daemon and CLI OCR jobs can close the remaining background-producer race by capturing one persisted source-occurrence/root/epoch fence at claim time and validating that same fence before every page-cache write and final OCR publication"
-expected_delta = "each OCR attempt is durably bound to the exact job attempt, document, source revision and triage identity, present source occurrence, canonical root/path and bounded root epoch; stale or deleting claims write no private OCR cache or publication facts, while shared-document supersession performs one deterministic bounded rebind without consuming failure budget"
-negative_control = "caller-supplied root or epoch, missing/mismatched/stale fence, active or unknown deletion receipt, invalid integer storage, stable-path root scans, rootless unmanaged direct import or daemon fixture, unbound daemon or CLI OCR writes, late-only guards, fallback, second phase/epoch owner, active path 45, more than 3,400 gross lines, auto-merge or gate weakening must fail closed"
-implementation_boundary = "strict schema-v39 COW migration plus one private meta-store OCR claim-fence owner reused by daemon and CLI; filesystem OCR and invisible artifact staging stay outside SQLite locks, the existing publication lease/head CAS remains authoritative, and runtime activation remains post-commit; do not add generic queues, outbox, UI/IPC or deletion phase recovery"
-resident_pool_workload = "not applicable; deterministic in-memory metadata-store tests own this correctness slice"
-resident_pool_acceptance = "not applicable; deterministic OCR claim/cache/publication transaction tests plus affected-crate regression own this correctness slice"
-full_product_acceptance = "real configured import creates OCR work, claim captures a persisted fence, sibling deletion makes cache/publication fail closed with zero corresponding private write, daemon and CLI share the same authority, shared-root rebind is bounded, COW/reopen recovery is strict, and stale post-DB publication runtime activation cannot win"
+hypothesis = "the existing Publishing to Purging to Verifying deletion pipeline can crash-converge under one receipt and frozen exclusive snapshot so any restart reaches Complete with machine-checkable zero private residue without deleting source files or disturbing sibling or shared roots"
+expected_delta = "crashes after Publishing search removal, after Purging Immediate, and mid-Verifying OCR-cache/tombstone/predecessor cleanup all restart on the same receipt to Complete with residual proof covering private DB rows, in-scope search generations/artifacts, unreferenced OCR page cache, tasks and old generations"
+negative_control = "generic outbox or queue, second authority, fallback, caller epoch, caller-less infrastructure, Quiescing reopen, OCR claim fence reopen, mechanical per-phase mini-slices, source-file deletion, sibling/shared leakage, active_search_projection fail-closed weakening, active path 21, more than 2,400 gross lines, auto-merge or gate weakening must fail closed"
+implementation_boundary = "reuse the existing daemon deletion driver and meta-store receipt/purge/privacy/completion owners; strengthen crash-idempotent reentry and residual proof only where needed for Publishing/Purging/Verifying; filesystem search generation work and predecessor destroy stay outside SQLite locks; do not add schema version, generic lifecycle framework, UI/IPC schema or Quiescing/OCR-fence changes"
+resident_pool_workload = "not applicable; deterministic metadata-store and daemon deletion crash witnesses own this correctness slice"
+resident_pool_acceptance = "not applicable; focused meta-store and daemon deletion tests plus warnings-denied Clippy own this correctness slice"
+full_product_acceptance = "injected crashes in Publishing, Purging and Verifying restart to Complete with residual=0; shared-hash OCR cache retained; sibling root searchable; source directory intact; source_files_deleted stays false"
 raw_profile_boundary = "no private path, filename, resume text, raw query, candidate result, token, PID, log, trace, database, index, model or cache bytes may enter tests, screenshots, git or GitHub"
-rollback_condition = "stop or forward-correct if an OCR claim can write cache/publication data without its persisted fence, caller identity can authorize it, unmanaged direct import or a daemon fixture can persist task/private rows without a source-root snapshot binding, purge leaves a fence orphan, shared-root settlement scans the stable path or consumes failure budget, staged runtime activation can beat a stale lease, a second authority appears, gross exceeds 3,400 lines or active path 45 is required"
+rollback_condition = "stop or forward-correct if a crash leaves private residue after restart, Complete succeeds with nonzero residual, source files are deleted, sibling or shared isolation breaks, a second authority or generic queue appears, gross exceeds 2,400 lines or active path 21 is required"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
